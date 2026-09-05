@@ -1,0 +1,52 @@
+# main に push されたら Apps Script に反映する（任意）。
+# 使うには:
+#   1. 手元で `npm run bootstrap` を済ませ、.clasp.json と .deployment-id をコミットする
+#   2. 手元の ~/.clasprc.json の中身を、リポジトリの Secret CLASPRC_JSON に登録する
+# Secret が無ければこのワークフローは何もしない。
+name: Deploy to Apps Script
+
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', '.clasp.json', '.deployment-id', '.github/workflows/deploy.yml']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Secret の有無を確認
+        id: check
+        run: |
+          if [ -z "${{ secrets.CLASPRC_JSON }}" ]; then
+            echo "CLASPRC_JSON が未設定のためスキップします"; echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.skip != 'true'
+        with:
+          node-version: 20
+
+      - name: 依存をインストール
+        if: steps.check.outputs.skip != 'true'
+        run: npm install --no-audit --no-fund
+
+      - name: 認証ファイルを書き出す
+        if: steps.check.outputs.skip != 'true'
+        run: printf '%s' "$CLASPRC_JSON" > "$RUNNER_TEMP/.clasprc.json"
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+
+      - name: push と再デプロイ
+        if: steps.check.outputs.skip != 'true'
+        env:
+          clasp_config_auth: ${{ runner.temp }}/.clasprc.json
+        run: |
+          npx clasp push -f
+          if [ -s .deployment-id ]; then
+            npx clasp update-deployment "$(cat .deployment-id)" -d "GitHub Actions ${GITHUB_SHA::7}"
+          else
+            echo ".deployment-id が無いので push のみ行いました"
+          fi

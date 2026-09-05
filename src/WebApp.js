@@ -14,11 +14,14 @@ function include_(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
-/** 画面の初期データ。 */
+/** 画面の初期データ。セットアップ未完了ならその状態だけ返す。 */
 function apiGetInitialData() {
+  const status = getSetupStatus_();
+  const ready = status.sheetsReady && status.apiKeySet;
   return {
-    drawers: getDrawers(),
-    master: getItemMaster().map(function (m) { return { name: m.name, unit: m.unit }; }),
+    setup: status,
+    drawers: ready ? getDrawers() : [],
+    master: ready ? getItemMaster().map(function (m) { return { name: m.name, unit: m.unit }; }) : [],
     config: {
       maxPhotos: CONFIG.MAX_PHOTOS,
       model: CONFIG.MODEL,
@@ -142,4 +145,52 @@ function savePhotos_(drawer, photos) {
       drawer.id + '_' + stamp + '_' + (i + 1) + '.' + ext);
     return folder.createFile(blob).getUrl();
   });
+}
+
+// ---------- 初回セットアップ（オーナーのみ） ----------
+
+function getSetupStatus_() {
+  const ss = getSpreadsheet_();
+  const sheetsReady = Object.keys(CONFIG.SHEETS).every(function (k) {
+    return !!ss.getSheetByName(CONFIG.SHEETS[k]);
+  });
+  const apiKeySet = !!PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  return { sheetsReady: sheetsReady, apiKeySet: apiKeySet, isOwner: isOwner_() };
+}
+
+/** Web アプリを開いている人がデプロイした本人かどうか。 */
+function isOwner_() {
+  try {
+    const active = Session.getActiveUser().getEmail();
+    const effective = Session.getEffectiveUser().getEmail();
+    return !!active && active === effective;
+  } catch (e) {
+    return false;
+  }
+}
+
+function assertOwner_() {
+  if (!isOwner_()) throw new Error('この操作はアプリをデプロイした本人だけができます。');
+}
+
+/** シートを作成する。 */
+function apiRunSetup() {
+  assertOwner_();
+  setupSpreadsheet();
+  return getSetupStatus_();
+}
+
+/** Claude API キーをスクリプトプロパティに保存し、疎通確認まで行う。 */
+function apiSetApiKey(key) {
+  assertOwner_();
+  key = String(key || '').trim();
+  if (!/^sk-ant-/.test(key)) throw new Error('API キーの形式が違います（sk-ant- で始まる文字列）。');
+  PropertiesService.getScriptProperties().setProperty('ANTHROPIC_API_KEY', key);
+  try {
+    const r = testClaudeConnection();
+    return { ok: true, model: r.model, displayName: r.displayName, status: getSetupStatus_() };
+  } catch (e) {
+    PropertiesService.getScriptProperties().deleteProperty('ANTHROPIC_API_KEY');
+    throw new Error('キーを保存しましたが接続に失敗したので取り消しました: ' + e.message);
+  }
 }

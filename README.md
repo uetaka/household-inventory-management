@@ -17,16 +17,52 @@ Claude API は claude.ai のサブスクとは別料金（従量課金）です�
 
 ## セットアップ
 
-### 1. スプレッドシートと Apps Script を用意する
+### A. clasp で一発セットアップ（推奨）
 
-1. Google ドライブで新しいスプレッドシートを作る（名前は自由。例: `日用品在庫`）
-2. メニュー「拡張機能 > Apps Script」を開く
-3. `src/` 配下のファイルをすべて Apps Script に入れる（どちらか一方）
-   - **手動**: エディタで同名のファイルを作り、内容を貼り付ける。`.js` は「スクリプト」、`Index.html` は「HTML」。`appsscript.json` は「プロジェクトの設定 > appsscript.json マニフェストを表示する」を有効にしてから貼り付ける
-   - **clasp**: `npm install` → `npm run login` → `.clasp.json.example` を `.clasp.json` にコピーしてスクリプトID（プロジェクトの設定に表示される）を書く → `npm run push`
-4. スプレッドシートを再読み込みすると「在庫管理」メニューが出る。「初期設定（シート作成）」を実行する（初回は権限の承認が求められる）
+手元の PC に Node.js 18 以上が必要です。Google へのログインはブラウザで行います。
 
-これで次の5シートが作られます。
+```bash
+npm install
+npm run login          # ブラウザが開くので Google アカウントで許可する
+npm run bootstrap      # スプレッドシート作成 → コード投入 → Web アプリ公開
+```
+
+事前に https://script.google.com/home/usersettings で「Google Apps Script API」を ON にしておいてください。
+
+`bootstrap` が終わると、スプレッドシート・Apps Script・Web アプリの URL が表示されます。
+生成された `.clasp.json`（スクリプトID）と `.deployment-id`（Web アプリのデプロイID）はコミットしておくと、以後は次のコマンドだけで更新できます。
+
+```bash
+npm run deploy         # src/ を push して同じ URL のまま新バージョンに更新
+npm run open:app       # Web アプリをブラウザで開く
+npm run open:sheet     # スプレッドシートを開く
+```
+
+次に Web アプリの URL を開き、初回の権限承認を済ませると「初回セットアップ」画面が出ます。
+
+1. 「シートを作成する」を押す（引き出し・品目マスタ・在庫・履歴・買い物リストの5シートとサンプルが入る）
+2. https://console.anthropic.com で発行した API キーを貼って「キーを保存して接続テスト」を押す
+
+この2つはアプリをデプロイした本人だけが実行できます。キーはスクリプトプロパティにだけ保存され、シートやコードには残りません。
+
+家族もスマホから使う場合は `src/appsscript.json` の `webapp.access` を `"ANYONE"`（Google アカウントでログインした人なら誰でも）に変えて `npm run deploy` し、URL を共有してください。
+
+### B. GitHub Actions で自動反映（任意）
+
+`main` に push するたびに Apps Script へ反映させたい場合は、次の2つを設定します。
+
+1. `.clasp.json` と `.deployment-id` をコミット済みにする
+2. 手元の `~/.clasprc.json` の中身をリポジトリの Secret `CLASPRC_JSON` に登録する
+
+Secret が無い間はワークフローは何もしません。`~/.clasprc.json` には Google のリフレッシュトークンが入っているので、Secret 以外の場所には置かないでください。
+
+### C. 手動で貼り付ける（clasp を使わない場合）
+
+1. 新しいスプレッドシートを作り「拡張機能 > Apps Script」を開く
+2. `src/` のファイルを同名で作って貼り付ける。`.js` は「スクリプト」、`Index.html` は「HTML」。`appsscript.json` は「プロジェクトの設定 > appsscript.json マニフェストを表示する」を ON にしてから貼る
+3. 「デプロイ > 新しいデプロイ > ウェブアプリ」で公開し、URL を開いて上と同じ初回セットアップを行う
+
+### シート構成
 
 | シート | 役割 |
 |---|---|
@@ -36,22 +72,7 @@ Claude API は claude.ai のサブスクとは別料金（従量課金）です�
 | 履歴 | 撮影ごとの写真リンク、認識結果、確定結果、トークン数 |
 | 買い物リスト | 最低在庫を下回った品目。確定のたびに更新 |
 
-### 2. Claude API キーを登録する
-
-1. https://console.anthropic.com でアカウントを作り、クレジットを購入して API キーを発行する
-2. Apps Script の「プロジェクトの設定 > スクリプト プロパティ」に `ANTHROPIC_API_KEY` として登録する
-3. スプレッドシートの「在庫管理 > Claude API 接続テスト」で疎通を確認する（トークンは消費しません）
-
-キーはスクリプトプロパティにだけ置き、シートやコードには書かないでください。
-コンソール側で月の利用上限も設定しておくと安心です。
-
-### 3. Web アプリとして公開する
-
-1. Apps Script の「デプロイ > 新しいデプロイ」→ 種類「ウェブアプリ」
-2. 「次のユーザーとして実行」= 自分、「アクセスできるユーザー」= 自分のみ（家族も使うなら「Google アカウントを持つ全員」にして URL を共有）
-3. 表示された URL をスマホで開き、ホーム画面に追加する
-
-コードを変更したときは「デプロイを管理」から同じデプロイの新バージョンを作ると URL が変わりません。
+スプレッドシート側にも「在庫管理」メニューがあり、初期設定・接続テスト・買い物リスト更新を実行できます。
 
 ## 使い方
 
@@ -89,6 +110,10 @@ Claude API は claude.ai のサブスクとは別料金（従量課金）です�
 ## ファイル構成
 
 ```
+scripts/
+  bootstrap.mjs    初回: シート作成 + push + Web アプリ公開
+  deploy.mjs       更新: push + 既存デプロイを新バージョンへ
+.github/workflows/deploy.yml  main への push で自動反映（任意）
 src/
   appsscript.json  マニフェスト（スコープ、Web アプリ設定）
   Config.js        設定とサンプルデータ

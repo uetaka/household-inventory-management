@@ -65,6 +65,23 @@
   <main>
     <div id="error" class="banner err hidden"></div>
 
+    <!-- 初回セットアップ（未完了のときだけ表示） -->
+    <section class="card hidden" id="setupSection">
+      <h2>初回セットアップ</h2>
+      <div id="setupNotOwner" class="banner warn hidden">セットアップが終わっていません。アプリをデプロイした本人がこの画面を開いて設定してください。</div>
+      <div id="setupOwner" class="hidden">
+        <div id="setupSheets">
+          <p class="muted">① 台帳のシート（引き出し・品目マスタ・在庫・履歴・買い物リスト）を作ります。</p>
+          <button id="setupSheetsBtn">シートを作成する</button>
+        </div>
+        <div id="setupKey" style="margin-top:12px">
+          <p class="muted">② Claude API キーを登録します。キーはスクリプトプロパティにだけ保存されます。</p>
+          <input type="text" id="apiKeyInput" placeholder="sk-ant-..." autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button id="setupKeyBtn">キーを保存して接続テスト</button>
+        </div>
+      </div>
+    </section>
+
     <!-- STEP 1: 引き出しを選ぶ -->
     <section class="card">
       <h2>1. 引き出しを選ぶ</h2>
@@ -131,6 +148,7 @@
           state.config = data.config;
           $('modelLabel').textContent = data.config.model;
           $('maxPhotos').textContent = data.config.maxPhotos;
+          if (!applySetupStatus(data.setup)) return;
           renderDrawers();
           renderMasterList();
           restoreDrawer();
@@ -138,6 +156,45 @@
         .withFailureHandler(fail)
         .apiGetInitialData();
     }
+
+    // ---------- 初回セットアップ ----------
+    function applySetupStatus(st) {
+      const ready = st.sheetsReady && st.apiKeySet;
+      $('setupSection').classList.toggle('hidden', ready);
+      $('photoSection').classList.toggle('hidden', !ready);
+      $('drawer').disabled = !ready;
+      if (ready) return true;
+      $('setupNotOwner').classList.toggle('hidden', st.isOwner);
+      $('setupOwner').classList.toggle('hidden', !st.isOwner);
+      $('setupSheets').classList.toggle('hidden', st.sheetsReady);
+      $('setupKey').classList.toggle('hidden', st.apiKeySet);
+      $('drawer').innerHTML = '<option value="">セットアップ後に使えます</option>';
+      return false;
+    }
+
+    $('setupSheetsBtn').addEventListener('click', () => {
+      clearError();
+      showOverlay('シートを作成中…');
+      google.script.run
+        .withSuccessHandler((st) => { hideOverlay(); if (applySetupStatus(st)) init(); })
+        .withFailureHandler(fail)
+        .apiRunSetup();
+    });
+
+    $('setupKeyBtn').addEventListener('click', () => {
+      clearError();
+      const key = $('apiKeyInput').value.trim();
+      if (!key) { showError('API キーを入力してください。'); return; }
+      showOverlay('接続を確認中…');
+      google.script.run
+        .withSuccessHandler((res) => {
+          hideOverlay();
+          $('apiKeyInput').value = '';
+          if (applySetupStatus(res.status)) init();
+        })
+        .withFailureHandler(fail)
+        .apiSetApiKey(key);
+    });
 
     function renderDrawers() {
       const sel = $('drawer');
