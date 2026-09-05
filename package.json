@@ -1,0 +1,15 @@
+{
+  "name": "household-inventory-management",
+  "version": "0.1.0",
+  "private": true,
+  "description": "家の日用品在庫を、引き出しごとの写真から Claude が認識して Google スプレッドシートに記録する GAS アプリ",
+  "scripts": {
+    "login": "clasp login",
+    "push": "clasp push",
+    "open": "clasp open",
+    "deploy": "clasp deploy"
+  },
+  "devDependencies": {
+    "@google/clasp": "^2.4.2"
+  }
+}

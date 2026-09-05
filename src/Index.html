@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>在庫スキャン</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #fff; --text: #1f2937; --muted: #6b7280;
+      --line: #e5e7eb; --accent: #2563eb; --accent-text: #fff;
+      --warn-bg: #fff7ed; --warn: #c2410c; --ok-bg: #ecfdf5; --ok: #047857; --danger: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; font-size: 16px; }
+    header { background: var(--card); border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 5; }
+    header h1 { margin: 0; font-size: 18px; }
+    header .model { font-size: 12px; color: var(--muted); }
+    main { padding: 12px; max-width: 640px; margin: 0 auto; }
+    section.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+    section.card h2 { margin: 0 0 10px; font-size: 15px; color: var(--muted); font-weight: 600; }
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    select, input[type=text], input[type=number] { width: 100%; font-size: 16px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text); }
+    button { font-size: 16px; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--text); width: 100%; margin-top: 8px; }
+    button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+    button:disabled { opacity: .5; }
+    button.small { width: auto; padding: 6px 10px; font-size: 13px; margin: 0; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .hidden { display: none !important; }
+    .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .thumb { position: relative; width: 96px; height: 96px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .thumb button { position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; padding: 0; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; border: none; font-size: 14px; margin: 0; }
+    .camera-btn { display: block; text-align: center; padding: 18px; border: 2px dashed var(--accent); border-radius: 12px; color: var(--accent); font-weight: 600; cursor: pointer; }
+    .camera-btn input { display: none; }
+    .prev-list { margin: 0; padding-left: 18px; font-size: 14px; }
+    .item { border-top: 1px solid var(--line); padding: 10px 0; }
+    .item:first-of-type { border-top: none; }
+    .item .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .item .row.name input { flex: 1; }
+    .item .row.qty input[type=number] { width: 84px; text-align: center; }
+    .item .row.qty select { flex: 1; }
+    .item .unit { width: 72px; }
+    .badge { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--line); color: var(--muted); white-space: nowrap; }
+    .badge.low { background: var(--warn-bg); color: var(--warn); }
+    .badge.new { background: #eef2ff; color: #4338ca; }
+    .badge.high { background: var(--ok-bg); color: var(--ok); }
+    .note { font-size: 12px; color: var(--muted); }
+    .del { width: 36px; padding: 6px 0; font-size: 18px; margin: 0; color: var(--danger); }
+    .banner { border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 10px; }
+    .banner.warn { background: var(--warn-bg); color: var(--warn); }
+    .banner.ok { background: var(--ok-bg); color: var(--ok); }
+    .banner.err { background: #fef2f2; color: var(--danger); }
+    .overlay { position: fixed; inset: 0; background: rgba(255,255,255,.85); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; font-size: 15px; }
+    .spinner { width: 36px; height: 36px; border: 4px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 12px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .stepper { display: flex; gap: 4px; }
+    .stepper button { width: 36px; padding: 6px 0; margin: 0; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>在庫スキャン</h1>
+    <span class="model" id="modelLabel"></span>
+  </header>
+
+  <main>
+    <div id="error" class="banner err hidden"></div>
+
+    <!-- STEP 1: 引き出しを選ぶ -->
+    <section class="card">
+      <h2>1. 引き出しを選ぶ</h2>
+      <select id="drawer">
+        <option value="">読み込み中…</option>
+      </select>
+      <div id="prev" class="muted" style="margin-top:8px"></div>
+    </section>
+
+    <!-- STEP 2: 写真を撮る -->
+    <section class="card" id="photoSection">
+      <h2>2. 中身を撮る</h2>
+      <label class="camera-btn">
+        📷 カメラで撮る / 写真を選ぶ
+        <input type="file" id="fileInput" accept="image/*" capture="environment" multiple>
+      </label>
+      <p class="muted">真上から、物を重ねずに。1枚で収まらなければ手前と奥で分けて<span id="maxPhotos"></span>枚まで。</p>
+      <div class="thumbs" id="thumbs"></div>
+      <button class="primary" id="recognizeBtn" disabled>Claude に数えてもらう</button>
+    </section>
+
+    <!-- STEP 3: 確認して確定 -->
+    <section class="card hidden" id="resultSection">
+      <h2>3. 確認して確定</h2>
+      <div id="notes" class="banner warn hidden"></div>
+      <div id="items"></div>
+      <button id="addRowBtn">＋ 行を追加</button>
+      <p class="muted" id="usage"></p>
+      <button class="primary" id="commitBtn">この内容でシートを更新</button>
+    </section>
+
+    <section class="card hidden" id="doneSection">
+      <div class="banner ok" id="doneMsg"></div>
+      <div id="shortage"></div>
+      <button class="primary" id="againBtn">別の引き出しを撮る</button>
+    </section>
+  </main>
+
+  <datalist id="masterList"></datalist>
+
+  <div class="overlay hidden" id="overlay">
+    <div class="spinner"></div>
+    <div id="overlayText">処理中…</div>
+  </div>
+
+  <script>
+    const state = {
+      drawers: [], master: [], config: {},
+      photos: [],           // { data: base64, mediaType, preview }
+      result: null,         // apiRecognize の返り値
+      items: [],            // 編集中の品目
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    // ---------- 初期化 ----------
+    function init() {
+      showOverlay('読み込み中…');
+      google.script.run
+        .withSuccessHandler((data) => {
+          hideOverlay();
+          state.drawers = data.drawers;
+          state.master = data.master;
+          state.config = data.config;
+          $('modelLabel').textContent = data.config.model;
+          $('maxPhotos').textContent = data.config.maxPhotos;
+          renderDrawers();
+          renderMasterList();
+          restoreDrawer();
+        })
+        .withFailureHandler(fail)
+        .apiGetInitialData();
+    }
+
+    function renderDrawers() {
+      const sel = $('drawer');
+      sel.innerHTML = '<option value="">引き出しを選択</option>' +
+        state.drawers.map(d => `<option value="${esc(d.id)}">${esc(d.name)}${d.location ? '（' + esc(d.location) + '）' : ''}</option>`).join('');
+    }
+
+    function renderMasterList() {
+      $('masterList').innerHTML = state.master.map(m => `<option value="${esc(m.name)}">`).join('');
+    }
+
+    function restoreDrawer() {
+      try {
+        const last = localStorage.getItem('lastDrawer');
+        if (last && state.drawers.some(d => d.id === last)) {
+          $('drawer').value = last;
+          loadPrev();
+        }
+      } catch (e) { /* localStorage が使えない環境 */ }
+    }
+
+    $('drawer').addEventListener('change', () => {
+      try { localStorage.setItem('lastDrawer', $('drawer').value); } catch (e) {}
+      loadPrev();
+      updateRecognizeBtn();
+    });
+
+    function loadPrev() {
+      const id = $('drawer').value;
+      $('prev').innerHTML = '';
+      if (!id) return;
+      google.script.run
+        .withSuccessHandler((res) => {
+          if (!res.items.length) { $('prev').textContent = 'まだ記録がありません。'; return; }
+          const when = res.lastUpdated ? new Date(res.lastUpdated).toLocaleString('ja-JP') : '';
+          $('prev').innerHTML = `前回（${esc(when)}）:<ul class="prev-list">` +
+            res.items.map(i => `<li>${esc(i.name)} × ${i.quantity} ${esc(i.unit)}</li>`).join('') + '</ul>';
+        })
+        .withFailureHandler(fail)
+        .apiGetDrawerInventory(id);
+    }
+
+    // ---------- 写真 ----------
+    $('fileInput').addEventListener('change', async (ev) => {
+      const files = Array.from(ev.target.files || []);
+      ev.target.value = '';
+      const room = state.config.maxPhotos - state.photos.length;
+      if (files.length > room) showError(`写真は ${state.config.maxPhotos} 枚までです。先頭 ${room} 枚だけ使います。`);
+      showOverlay('写真を縮小中…');
+      try {
+        for (const f of files.slice(0, Math.max(0, room))) {
+          const data = await fileToJpegBase64(f, 1568, 0.85);
+          state.photos.push({ data, mediaType: 'image/jpeg', preview: 'data:image/jpeg;base64,' + data });
+        }
+      } catch (e) {
+        showError('写真の読み込みに失敗しました: ' + e.message);
+      }
+      hideOverlay();
+      renderThumbs();
+      updateRecognizeBtn();
+    });
+
+    async function fileToJpegBase64(file, maxEdge, quality) {
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      } catch (e) {
+        bitmap = await loadImage(file);
+      }
+      const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+      const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+      if (bitmap.close) bitmap.close();
+      return canvas.toDataURL('image/jpeg', quality).split(',')[1];
+    }
+
+    function loadImage(file) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を開けません')); };
+        img.src = url;
+      });
+    }
+
+    function renderThumbs() {
+      $('thumbs').innerHTML = state.photos.map((p, i) =>
+        `<div class="thumb"><img src="${p.preview}" alt=""><button data-i="${i}" aria-label="削除">×</button></div>`).join('');
+      $('thumbs').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+        state.photos.splice(Number(b.dataset.i), 1);
+        renderThumbs();
+        updateRecognizeBtn();
+      }));
+    }
+
+    function updateRecognizeBtn() {
+      $('recognizeBtn').disabled = !($('drawer').value && state.photos.length);
+    }
+
+    // ---------- 認識 ----------
+    $('recognizeBtn').addEventListener('click', () => {
+      clearError();
+      showOverlay('Claude が数えています…（20〜40秒）');
+      const payload = state.photos.map(p => ({ data: p.data, mediaType: p.mediaType }));
+      google.script.run
+        .withSuccessHandler((res) => {
+          hideOverlay();
+          state.result = res;
+          state.items = res.items.map(i => Object.assign({}, i));
+          renderItems();
+          $('notes').textContent = res.notes || '';
+          $('notes').classList.toggle('hidden', !res.notes);
+          $('usage').textContent = `入力 ${res.usage.input} / 出力 ${res.usage.output} トークン（${res.model}）`;
+          $('resultSection').classList.remove('hidden');
+          $('resultSection').scrollIntoView({ behavior: 'smooth' });
+        })
+        .withFailureHandler(fail)
+        .apiRecognize($('drawer').value, payload);
+    });
+
+    // ---------- 結果の編集 ----------
+    function renderItems() {
+      const R = state.config.remainingLabels, C = state.config.confidenceLabels;
+      const remainingOptions = (cur) => Object.keys(R).map(k => `<option value="${k}" ${k === cur ? 'selected' : ''}>${R[k]}</option>`).join('');
+      $('items').innerHTML = state.items.map((it, i) => `
+        <div class="item" data-i="${i}">
+          <div class="row name">
+            <input type="text" list="masterList" value="${esc(it.name)}" data-f="name" placeholder="品目名">
+            <button class="del" data-del="${i}" aria-label="削除">🗑</button>
+          </div>
+          <div class="row qty">
+            <div class="stepper">
+              <button data-step="-1">−</button>
+              <input type="number" min="0" step="1" value="${it.quantity}" data-f="quantity" inputmode="numeric">
+              <button data-step="1">＋</button>
+            </div>
+            <input type="text" class="unit" value="${esc(it.unit)}" data-f="unit" placeholder="単位">
+            <select data-f="remaining">${remainingOptions(it.remaining)}</select>
+          </div>
+          <div class="row">
+            <span class="badge ${it.confidence}">確信度: ${C[it.confidence] || it.confidence}</span>
+            ${it.isNew ? '<span class="badge new">新規品目</span>' : ''}
+            ${it.note ? `<span class="note">${esc(it.note)}</span>` : ''}
+          </div>
+        </div>`).join('') || '<p class="muted">何も認識されませんでした。行を追加して手入力できます。</p>';
+
+      $('items').querySelectorAll('[data-f]').forEach(el => {
+        el.addEventListener('input', () => {
+          const i = Number(el.closest('.item').dataset.i);
+          const f = el.dataset.f;
+          state.items[i][f] = f === 'quantity' ? Number(el.value) : el.value;
+          if (f === 'name') applyMasterUnit(i, el);
+        });
+      });
+      $('items').querySelectorAll('[data-step]').forEach(b => b.addEventListener('click', () => {
+        const i = Number(b.closest('.item').dataset.i);
+        state.items[i].quantity = Math.max(0, (Number(state.items[i].quantity) || 0) + Number(b.dataset.step));
+        b.parentElement.querySelector('input').value = state.items[i].quantity;
+      }));
+      $('items').querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => {
+        state.items.splice(Number(b.dataset.del), 1);
+        renderItems();
+      }));
+    }
+
+    function applyMasterUnit(i, nameInput) {
+      const m = state.master.find(m => m.name === nameInput.value);
+      if (m && m.unit) {
+        state.items[i].unit = m.unit;
+        nameInput.closest('.item').querySelector('[data-f=unit]').value = m.unit;
+        state.items[i].isNew = false;
+      }
+    }
+
+    $('addRowBtn').addEventListener('click', () => {
+      state.items.push({ name: '', quantity: 1, unit: '個', remaining: 'full', confidence: 'high', isNew: false, note: '', needsReview: false });
+      renderItems();
+      const last = $('items').querySelector('.item:last-child input[data-f=name]');
+      if (last) last.focus();
+    });
+
+    // ---------- 確定 ----------
+    $('commitBtn').addEventListener('click', () => {
+      clearError();
+      const items = state.items.filter(i => i.name && i.name.trim());
+      if (!items.length && !confirm('品目が0件です。この引き出しを空として記録しますか？')) return;
+      // ユーザーが目で確認した時点で確信度は「高」扱いにする。名前を修正した新規品目も確認済み。
+      const finalItems = items.map(i => Object.assign({}, i, { needsReview: false }));
+      showOverlay('シートに書き込み中…');
+      google.script.run
+        .withSuccessHandler((res) => {
+          hideOverlay();
+          $('doneMsg').textContent = `${res.count} 品目を記録しました。` +
+            (res.newItems.length ? ` 品目マスタに追加: ${res.newItems.join('、')}` : '');
+          $('shortage').innerHTML = res.shortage.length
+            ? `<div class="banner warn">買い足しが必要: ` + res.shortage.map(s => `${esc(s.name)}（あと${s.shortage}）`).join('、') + '</div>'
+            : '<p class="muted">最低在庫を下回っている品目はありません。</p>';
+          $('resultSection').classList.add('hidden');
+          $('photoSection').classList.add('hidden');
+          $('doneSection').classList.remove('hidden');
+          $('doneSection').scrollIntoView({ behavior: 'smooth' });
+        })
+        .withFailureHandler(fail)
+        .apiCommit($('drawer').value, finalItems, {
+          recognized: state.result ? state.result.items : null,
+          photoUrls: state.result ? state.result.photoUrls : [],
+          usage: state.result ? state.result.usage : null,
+          model: state.result ? state.result.model : null,
+        });
+    });
+
+    $('againBtn').addEventListener('click', () => {
+      state.photos = []; state.result = null; state.items = [];
+      renderThumbs();
+      $('doneSection').classList.add('hidden');
+      $('photoSection').classList.remove('hidden');
+      loadPrev();
+      updateRecognizeBtn();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    // ---------- 共通 ----------
+    function showOverlay(text) { $('overlayText').textContent = text; $('overlay').classList.remove('hidden'); }
+    function hideOverlay() { $('overlay').classList.add('hidden'); }
+    function showError(msg) { $('error').textContent = msg; $('error').classList.remove('hidden'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+    function clearError() { $('error').classList.add('hidden'); }
+    function fail(err) { hideOverlay(); showError(err && err.message ? err.message : String(err)); }
+    function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+    init();
+  </script>
+</body>
+</html>

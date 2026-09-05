@@ -1,0 +1,4 @@
+# clasp (script ID / credentials are per-user)
+.clasp.json
+.clasprc.json
+node_modules/
