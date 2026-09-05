@@ -40,9 +40,10 @@ const RECOGNITION_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'quantity', 'unit', 'remaining', 'confidence', 'is_new', 'note'],
+        required: ['name', 'quantity', 'unit', 'remaining', 'confidence', 'is_new', 'product', 'note'],
         properties: {
-          name: { type: 'string', description: '品目名。品目マスタにあれば必ずその正規名。' },
+          name: { type: 'string', description: '品目名（種類名）。品目マスタにあれば必ずその正規名。ブランド名や商品名は含めない。' },
+          product: { type: 'string', description: 'パッケージから読み取れたブランド名・商品名（例: 「アタック 抗菌EX」）。読めなければ空文字。' },
           quantity: { type: 'integer', description: '写真から数えた個数。' },
           unit: { type: 'string', description: '単位（個・本・袋・ロール・箱など）。' },
           remaining: {
@@ -81,7 +82,8 @@ function buildSystemPrompt_(drawer, master, previous) {
     '',
     'ルール:',
     '1. 写真にはっきり写っている物だけを数える。奥に隠れて見えない物は推測で足さず、見えている分だけ数えて confidence を low にする。',
-    '2. 品目名は下の品目マスタにある正規名を必ず使う（別名に一致した場合も正規名にする）。マスタに無い物は is_new を true にし、商品名ではなく日本の家庭で通じる種類名を付ける（例: 「トイレットペーパー」「食器用洗剤 詰め替え」）。',
+    '2. 品目名（name）は種類名にする。下の品目マスタにある正規名を必ず使う（別名に一致した場合も正規名にする）。マスタに無い物は is_new を true にし、日本の家庭で通じる種類名を付ける（例: 「トイレットペーパー」「食器用洗剤 詰め替え」）。',
+    '   ブランド名や商品名（例: 「アタック」「エリエール」）は name に入れず、パッケージから読めた範囲で product に書く。読めなければ空にする。',
     '3. 同じ品目は1行にまとめる。詰め替え用と本体ボトルは別の品目として扱う。',
     '4. quantity は個数（本・袋・ロール・箱・パックなど）。単位はマスタに合わせ、無い場合は写真から妥当な単位を選ぶ。',
     '5. 開封済みの容器は remaining に残量の目安を入れる。未開封は full。判断できなければ unknown。',
@@ -174,6 +176,7 @@ function recognizeInventory(images, drawer, master, previous) {
       remaining: it.remaining || 'unknown',
       confidence: it.confidence || 'medium',
       isNew: it.is_new === true,
+      product: String(it.product || '').trim(),
       note: String(it.note || '').trim(),
       needsReview: it.confidence === 'low' || it.is_new === true,
     };

@@ -79,6 +79,8 @@ function getItemMaster() {
         aliases: toStr_(r['別名']).split(/[,、，]/).map(function (s) { return s.trim(); }).filter(Boolean),
         minStock: toNum_(r['最低在庫'], 0),
         category: toStr_(r['カテゴリ']),
+        product: toStr_(r['定番商品']),
+        store: toStr_(r['購入先']),
       };
     })
     .filter(function (m) { return m.name; });
@@ -97,7 +99,8 @@ function addNewItemsToMaster_(items) {
     const name = toStr_(it.name);
     if (!name || known[name]) return;
     known[name] = true;
-    additions.push([name, toStr_(it.unit) || '個', '', '', '']);
+    // 定番商品は人が決めるものなので空のまま。写真から読めた商品名だけ参考に入れておく。
+    additions.push([name, toStr_(it.unit) || '個', '', '', '', '', '']);
   });
   if (additions.length) {
     const sheet = getSheet_(CONFIG.SHEETS.ITEMS);
@@ -130,6 +133,7 @@ function inventoryRowToObject_(r) {
     needsReview: r['要確認'] === true || toStr_(r['要確認']) === 'TRUE',
     updatedAt: r['最終更新'] instanceof Date ? r['最終更新'].toISOString() : toStr_(r['最終更新']),
     note: toStr_(r['メモ']),
+    product: toStr_(r['見えた商品名']),
   };
 }
 
@@ -159,6 +163,7 @@ function replaceDrawerInventory_(drawer, items, now) {
         it.needsReview === true,
         now,
         toStr_(it.note),
+        toStr_(it.product),
       ];
     });
     const body = kept.concat(fresh);
@@ -215,7 +220,7 @@ function refreshShoppingList() {
     .filter(function (m) { return m.minStock > 0 && (totals[m.name] || 0) < m.minStock; })
     .map(function (m) {
       const have = totals[m.name] || 0;
-      return [m.name, have, m.minStock, m.minStock - have, (places[m.name] || []).join('、'), now];
+      return [m.name, m.product, m.store, have, m.minStock, m.minStock - have, (places[m.name] || []).join('、'), now];
     });
 
   const sheet = getSheet_(CONFIG.SHEETS.SHOPPING);
@@ -226,5 +231,5 @@ function refreshShoppingList() {
   if (rows.length) {
     sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
   }
-  return rows.map(function (r) { return { name: r[0], have: r[1], min: r[2], shortage: r[3] }; });
+  return rows.map(function (r) { return { name: r[0], product: r[1], store: r[2], have: r[3], min: r[4], shortage: r[5] }; });
 }

@@ -349,6 +349,8 @@
           <div class="row">
             <span class="badge ${it.confidence}">確信度: ${C[it.confidence] || it.confidence}</span>
             ${it.isNew ? '<span class="badge new">新規品目</span>' : ''}
+            ${it.product ? `<span class="badge">見えた商品: ${esc(it.product)}</span>` : ''}
+            ${masterProduct(it.name) ? `<span class="badge high">定番: ${esc(masterProduct(it.name))}</span>` : ''}
             ${it.note ? `<span class="note">${esc(it.note)}</span>` : ''}
           </div>
         </div>`).join('') || '<p class="muted">何も認識されませんでした。行を追加して手入力できます。</p>';
@@ -372,6 +374,11 @@
       }));
     }
 
+    function masterProduct(name) {
+      const m = state.master.find(m => m.name === name);
+      return m && m.product ? m.product : '';
+    }
+
     function applyMasterUnit(i, nameInput) {
       const m = state.master.find(m => m.name === nameInput.value);
       if (m && m.unit) {
@@ -382,7 +389,7 @@
     }
 
     $('addRowBtn').addEventListener('click', () => {
-      state.items.push({ name: '', quantity: 1, unit: '個', remaining: 'full', confidence: 'high', isNew: false, note: '', needsReview: false });
+      state.items.push({ name: '', quantity: 1, unit: '個', remaining: 'full', confidence: 'high', isNew: false, product: '', note: '', needsReview: false });
       renderItems();
       const last = $('items').querySelector('.item:last-child input[data-f=name]');
       if (last) last.focus();
@@ -402,7 +409,7 @@
           $('doneMsg').textContent = `${res.count} 品目を記録しました。` +
             (res.newItems.length ? ` 品目マスタに追加: ${res.newItems.join('、')}` : '');
           $('shortage').innerHTML = res.shortage.length
-            ? `<div class="banner warn">買い足しが必要: ` + res.shortage.map(s => `${esc(s.name)}（あと${s.shortage}）`).join('、') + '</div>'
+            ? `<div class="banner warn">買い足しが必要: ` + res.shortage.map(s => `${esc(s.name)}${s.product ? ' → ' + esc(s.product) : ''}（あと${s.shortage}）`).join('、') + '</div>'
             : '<p class="muted">最低在庫を下回っている品目はありません。</p>';
           $('resultSection').classList.add('hidden');
           $('photoSection').classList.add('hidden');

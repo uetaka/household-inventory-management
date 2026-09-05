@@ -21,7 +21,7 @@ function apiGetInitialData() {
   return {
     setup: status,
     drawers: ready ? getDrawers() : [],
-    master: ready ? getItemMaster().map(function (m) { return { name: m.name, unit: m.unit }; }) : [],
+    master: ready ? getItemMaster().map(function (m) { return { name: m.name, unit: m.unit, product: m.product }; }) : [],
     config: {
       maxPhotos: CONFIG.MAX_PHOTOS,
       model: CONFIG.MODEL,
@@ -91,6 +91,7 @@ function apiCommit(drawerId, items, meta) {
       unit: String(it.unit || '').trim(),
       remaining: it.remaining || 'unknown',
       confidence: it.confidence || 'high',
+      product: String(it.product || '').trim(),
       note: String(it.note || '').trim(),
       needsReview: it.needsReview === true,
     };
