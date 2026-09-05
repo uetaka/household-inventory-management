@@ -41,9 +41,23 @@ npm run open:sheet     # スプレッドシートを開く
 次に Web アプリの URL を開き、初回の権限承認を済ませると「初回セットアップ」画面が出ます。
 
 1. 「シートを作成する」を押す（引き出し・品目マスタ・在庫・履歴・買い物リストの5シートとサンプルが入る）
-2. https://console.anthropic.com で発行した API キーを貼って「キーを保存して接続テスト」を押す
+2. Claude Console で発行した API キーを貼って「キーを保存して接続テスト」を押す（発行方法は次項）
 
 この2つはアプリをデプロイした本人だけが実行できます。キーはスクリプトプロパティにだけ保存され、シートやコードには残りません。
+
+### Claude API キーの作り方
+
+https://platform.claude.com/settings/keys の「Create key」で作ります。選ぶ項目と推奨は次のとおりです。
+
+| 項目 | 推奨 | 理由 |
+|---|---|---|
+| Linked account | 自分（Personal key） | このアプリはあなたのアカウントとして動く。Service account は共有・自動化用で家庭には不要 |
+| Workspace | 専用ワークスペースを作って、それに限定する | 限定しないとリクエストごとにワークスペースIDが必要になる。ワークスペース単位で月の支出上限も設定できる |
+| Expiration | カスタムで1年程度（または Never） | 期限は後から変更できない。1年なら期限7日前にメールが来るので、初回セットアップ画面から貼り直すだけで済む |
+
+ワークスペースは https://platform.claude.com/settings/workspaces で作り、Spend limit に月の上限（例: 10ドル）を入れておくと暴走しても止まります。
+
+キーを限定せずに作った場合（複数ワークスペース対応キー）は、スクリプトプロパティ `ANTHROPIC_WORKSPACE_ID` に `wrkspc_...` を設定してください。未設定だと接続テストで案内が出ます。
 
 家族もスマホから使う場合は `src/appsscript.json` の `webapp.access` を `"ANYONE"`（Google アカウントでログインした人なら誰でも）に変えて `npm run deploy` し、URL を共有してください。
 

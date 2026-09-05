@@ -8,9 +8,25 @@ const CLAUDE_MODELS_URL = 'https://api.anthropic.com/v1/models/';
 function getApiKey_() {
   const key = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!key) {
-    throw new Error('ANTHROPIC_API_KEY が未設定です。Apps Script の「プロジェクトの設定 > スクリプト プロパティ」に登録してください。');
+    throw new Error('ANTHROPIC_API_KEY が未設定です。Web アプリの初回セットアップ画面か、Apps Script の「プロジェクトの設定 > スクリプト プロパティ」で登録してください。');
   }
   return key;
+}
+
+/**
+ * Claude API 共通ヘッダー。
+ * キーを特定ワークスペースに限定して作っていれば ANTHROPIC_WORKSPACE_ID は不要。
+ * 複数ワークスペース対応のキーの場合はスクリプトプロパティ ANTHROPIC_WORKSPACE_ID（wrkspc_...）が必須。
+ */
+function claudeHeaders_(extra) {
+  const headers = {
+    'Authorization': 'Bearer ' + getApiKey_(),
+    'anthropic-version': '2023-06-01',
+  };
+  const workspaceId = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_WORKSPACE_ID');
+  if (workspaceId) headers['anthropic-workspace-id'] = workspaceId.trim();
+  Object.keys(extra || {}).forEach(function (k) { headers[k] = extra[k]; });
+  return headers;
 }
 
 /** 認識結果の JSON スキーマ。構造化出力で必ずこの形で返る。 */
@@ -120,11 +136,7 @@ function recognizeInventory(images, drawer, master, previous) {
   const response = UrlFetchApp.fetch(CLAUDE_API_URL, {
     method: 'post',
     contentType: 'application/json',
-    headers: {
-      'x-api-key': getApiKey_(),
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'server-side-fallback-2026-07-01',
-    },
+    headers: claudeHeaders_({ 'anthropic-beta': 'server-side-fallback-2026-07-01' }),
     payload: JSON.stringify(body),
     muteHttpExceptions: true,
   });
@@ -178,7 +190,16 @@ function recognizeInventory(images, drawer, master, previous) {
 function summarizeApiError_(text) {
   try {
     const j = JSON.parse(text);
-    if (j.error && j.error.message) return j.error.type + ': ' + j.error.message;
+    if (j.error && j.error.message) {
+      if (/anthropic-workspace-id/.test(j.error.message)) {
+        return 'この API キーは複数ワークスペース対応のためワークスペースIDが必要です。'
+          + 'キーを特定のワークスペースに限定して作り直すか、スクリプトプロパティ ANTHROPIC_WORKSPACE_ID に wrkspc_... を設定してください。';
+      }
+      if (j.error.type === 'authentication_error') {
+        return 'API キーが無効か期限切れです。コンソールで新しいキーを発行して登録し直してください。';
+      }
+      return j.error.type + ': ' + j.error.message;
+    }
   } catch (e) { /* JSON でなければそのまま */ }
   return text.slice(0, 300);
 }
@@ -187,7 +208,7 @@ function summarizeApiError_(text) {
 function testClaudeConnection() {
   const response = UrlFetchApp.fetch(CLAUDE_MODELS_URL + CONFIG.MODEL, {
     method: 'get',
-    headers: { 'x-api-key': getApiKey_(), 'anthropic-version': '2023-06-01' },
+    headers: claudeHeaders_(),
     muteHttpExceptions: true,
   });
   const status = response.getResponseCode();
