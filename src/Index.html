@@ -22,9 +22,11 @@
     button { font-size: 16px; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--text); width: 100%; margin-top: 8px; }
     button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
     button:disabled { opacity: .5; }
-    button.small { width: auto; padding: 6px 10px; font-size: 13px; margin: 0; }
     .muted { color: var(--muted); font-size: 13px; }
     .hidden { display: none !important; }
+    .tabs { display: flex; background: var(--line); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
+    .tabs button { margin: 0; padding: 9px; border: none; background: transparent; border-radius: 8px; font-size: 14px; color: var(--muted); }
+    .tabs button.active { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
     .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .thumb { position: relative; width: 96px; height: 96px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
     .thumb img { width: 100%; height: 100%; object-fit: cover; }
@@ -36,16 +38,18 @@
     .prev-list { margin: 0; padding-left: 18px; font-size: 14px; }
     .item { border-top: 1px solid var(--line); padding: 10px 0; }
     .item:first-of-type { border-top: none; }
-    .item .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .item .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
     .item .row.name input { flex: 1; }
     .item .row.qty input[type=number] { width: 84px; text-align: center; }
     .item .row.qty select { flex: 1; }
     .item .unit { width: 72px; }
+    .item .grow { flex: 1; min-width: 120px; }
     .badge { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--line); color: var(--muted); white-space: nowrap; }
     .badge.low { background: var(--warn-bg); color: var(--warn); }
     .badge.new { background: #eef2ff; color: #4338ca; }
     .badge.high { background: var(--ok-bg); color: var(--ok); }
     .note { font-size: 12px; color: var(--muted); }
+    .field-label { font-size: 11px; color: var(--muted); width: 100%; margin: 2px 0 -4px; }
     .del { width: 36px; padding: 6px 0; font-size: 18px; margin: 0; color: var(--danger); }
     .banner { border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-bottom: 10px; }
     .banner.warn { background: var(--warn-bg); color: var(--warn); }
@@ -84,8 +88,13 @@
       </div>
     </section>
 
-    <!-- STEP 1: 引き出しを選ぶ -->
-    <section class="card">
+    <div class="tabs hidden" id="tabs">
+      <button data-mode="count" class="active">在庫を数える</button>
+      <button data-mode="register">商品を登録する</button>
+    </div>
+
+    <!-- 在庫モード STEP 1 -->
+    <section class="card mode-count" id="drawerSection">
       <h2>1. 引き出しを選ぶ</h2>
       <select id="drawer">
         <option value="">読み込み中…</option>
@@ -93,9 +102,16 @@
       <div id="prev" class="muted" style="margin-top:8px"></div>
     </section>
 
-    <!-- STEP 2: 写真を撮る -->
+    <!-- 登録モード 説明 -->
+    <section class="card mode-register hidden" id="registerIntro">
+      <h2>品目マスタに商品を登録する</h2>
+      <p class="muted" style="margin:0">いつも買っている商品を、パッケージの文字が読める距離で撮ります。1枚に数個並べても構いません。読み取った「種類名」と「定番商品名」を確認して登録すると、以後の在庫カウントと買い物リストに使われます。</p>
+      <p class="muted" id="masterCount" style="margin:8px 0 0"></p>
+    </section>
+
+    <!-- 写真（両モード共通） -->
     <section class="card" id="photoSection">
-      <h2>2. 中身を撮る</h2>
+      <h2 id="photoTitle">2. 中身を撮る</h2>
       <div class="pick-row">
         <label class="camera-btn">
           📷 カメラで撮る
@@ -106,12 +122,12 @@
           <input type="file" class="fileInput" accept="image/*" multiple>
         </label>
       </div>
-      <p class="muted">真上から、物を重ねずに。ボタンを押すたびに1枚ずつ追加され、<span id="maxPhotos"></span>枚までまとめて認識します。</p>
+      <p class="muted" id="photoHint"></p>
       <div class="thumbs" id="thumbs"></div>
       <button class="primary" id="recognizeBtn" disabled>Claude に数えてもらう</button>
     </section>
 
-    <!-- STEP 3: 確認して確定 -->
+    <!-- 在庫モード 結果 -->
     <section class="card hidden" id="resultSection">
       <h2>3. 確認して確定</h2>
       <div id="notes" class="banner warn hidden"></div>
@@ -121,10 +137,20 @@
       <button class="primary" id="commitBtn">この内容でシートを更新</button>
     </section>
 
+    <!-- 登録モード 結果 -->
+    <section class="card hidden" id="productSection">
+      <h2>読み取った商品を確認して登録</h2>
+      <div id="productNotes" class="banner warn hidden"></div>
+      <div id="products"></div>
+      <button id="addProductBtn">＋ 行を追加</button>
+      <p class="muted" id="productUsage"></p>
+      <button class="primary" id="saveProductsBtn">品目マスタに登録</button>
+    </section>
+
     <section class="card hidden" id="doneSection">
       <div class="banner ok" id="doneMsg"></div>
       <div id="shortage"></div>
-      <button class="primary" id="againBtn">別の引き出しを撮る</button>
+      <button class="primary" id="againBtn">続けて撮る</button>
     </section>
   </main>
 
@@ -136,11 +162,14 @@
   </div>
 
   <script>
+    const CATEGORIES = ['洗面', 'バス', 'トイレ', 'キッチン', '洗濯', '日用品', '電池', 'その他'];
     const state = {
+      mode: 'count',        // 'count' | 'register'
       drawers: [], master: [], config: {},
-      photos: [],           // { data: base64, mediaType, preview }
-      result: null,         // apiRecognize の返り値
-      items: [],            // 編集中の品目
+      photos: [],           // { data, mediaType, preview }
+      result: null,         // 認識 API の返り値
+      items: [],            // 在庫モードの編集中データ
+      products: [],         // 登録モードの編集中データ
     };
 
     const $ = (id) => document.getElementById(id);
@@ -155,11 +184,12 @@
           state.master = data.master;
           state.config = data.config;
           $('modelLabel').textContent = data.config.model;
-          $('maxPhotos').textContent = data.config.maxPhotos;
           if (!applySetupStatus(data.setup)) return;
+          $('tabs').classList.remove('hidden');
           renderDrawers();
           renderMasterList();
           restoreDrawer();
+          setMode(state.mode);
         })
         .withFailureHandler(fail)
         .apiGetInitialData();
@@ -204,6 +234,39 @@
         .apiSetApiKey(key);
     });
 
+    // ---------- モード切替 ----------
+    document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+
+    function setMode(mode) {
+      state.mode = mode;
+      document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+      document.querySelectorAll('.mode-count').forEach(el => el.classList.toggle('hidden', mode !== 'count'));
+      document.querySelectorAll('.mode-register').forEach(el => el.classList.toggle('hidden', mode !== 'register'));
+      resetFlow();
+      if (mode === 'count') {
+        $('photoTitle').textContent = '2. 中身を撮る';
+        $('photoHint').innerHTML = `真上から、物を重ねずに。ボタンを押すたびに1枚ずつ追加され、${state.config.maxPhotos}枚までまとめて認識します。`;
+        $('recognizeBtn').textContent = 'Claude に数えてもらう';
+      } else {
+        $('photoTitle').textContent = '商品を撮る';
+        $('photoHint').innerHTML = `パッケージの商品名・容量が読める距離で。${state.config.maxPhotos}枚までまとめて読み取ります。`;
+        $('recognizeBtn').textContent = 'Claude に読み取ってもらう';
+        $('masterCount').textContent = `現在の品目マスタ: ${state.master.length} 件（定番商品あり ${state.master.filter(m => m.product).length} 件）`;
+      }
+      updateRecognizeBtn();
+    }
+
+    function resetFlow() {
+      state.photos = []; state.result = null; state.items = []; state.products = [];
+      renderThumbs();
+      $('resultSection').classList.add('hidden');
+      $('productSection').classList.add('hidden');
+      $('doneSection').classList.add('hidden');
+      $('photoSection').classList.remove('hidden');
+      clearError();
+    }
+
+    // ---------- 引き出し ----------
     function renderDrawers() {
       const sel = $('drawer');
       sel.innerHTML = '<option value="">引き出しを選択</option>' +
@@ -247,6 +310,7 @@
 
     // ---------- 写真 ----------
     document.querySelectorAll('.fileInput').forEach(el => el.addEventListener('change', onFilesPicked));
+
     async function onFilesPicked(ev) {
       const files = Array.from(ev.target.files || []);
       ev.target.value = '';
@@ -303,31 +367,54 @@
     }
 
     function updateRecognizeBtn() {
-      $('recognizeBtn').disabled = !($('drawer').value && state.photos.length);
+      const needDrawer = state.mode === 'count';
+      $('recognizeBtn').disabled = !((!needDrawer || $('drawer').value) && state.photos.length);
     }
 
     // ---------- 認識 ----------
     $('recognizeBtn').addEventListener('click', () => {
       clearError();
-      showOverlay('Claude が数えています…（20〜40秒）');
       const payload = state.photos.map(p => ({ data: p.data, mediaType: p.mediaType }));
-      google.script.run
-        .withSuccessHandler((res) => {
-          hideOverlay();
-          state.result = res;
-          state.items = res.items.map(i => Object.assign({}, i));
-          renderItems();
-          $('notes').textContent = res.notes || '';
-          $('notes').classList.toggle('hidden', !res.notes);
-          $('usage').textContent = `入力 ${res.usage.input} / 出力 ${res.usage.output} トークン（${res.model}）`;
-          $('resultSection').classList.remove('hidden');
-          $('resultSection').scrollIntoView({ behavior: 'smooth' });
-        })
-        .withFailureHandler(fail)
-        .apiRecognize($('drawer').value, payload);
+      if (state.mode === 'count') {
+        showOverlay('Claude が数えています…（20〜40秒）');
+        google.script.run
+          .withSuccessHandler((res) => {
+            hideOverlay();
+            state.result = res;
+            state.items = res.items.map(i => Object.assign({}, i));
+            renderItems();
+            $('notes').textContent = res.notes || '';
+            $('notes').classList.toggle('hidden', !res.notes);
+            $('usage').textContent = usageText(res);
+            $('resultSection').classList.remove('hidden');
+            $('resultSection').scrollIntoView({ behavior: 'smooth' });
+          })
+          .withFailureHandler(fail)
+          .apiRecognize($('drawer').value, payload);
+      } else {
+        showOverlay('Claude が商品を読み取っています…（20〜40秒）');
+        google.script.run
+          .withSuccessHandler((res) => {
+            hideOverlay();
+            state.result = res;
+            state.products = res.products.map(p => Object.assign({ minStock: '' }, p));
+            renderProducts();
+            $('productNotes').textContent = res.notes || '';
+            $('productNotes').classList.toggle('hidden', !res.notes);
+            $('productUsage').textContent = usageText(res);
+            $('productSection').classList.remove('hidden');
+            $('productSection').scrollIntoView({ behavior: 'smooth' });
+          })
+          .withFailureHandler(fail)
+          .apiRecognizeProducts(payload);
+      }
     });
 
-    // ---------- 結果の編集 ----------
+    function usageText(res) {
+      return `入力 ${res.usage.input} / 出力 ${res.usage.output} トークン（${res.model}）`;
+    }
+
+    // ---------- 在庫モード: 結果の編集 ----------
     function renderItems() {
       const R = state.config.remainingLabels, C = state.config.confidenceLabels;
       const remainingOptions = (cur) => Object.keys(R).map(k => `<option value="${k}" ${k === cur ? 'selected' : ''}>${R[k]}</option>`).join('');
@@ -395,12 +482,10 @@
       if (last) last.focus();
     });
 
-    // ---------- 確定 ----------
     $('commitBtn').addEventListener('click', () => {
       clearError();
       const items = state.items.filter(i => i.name && i.name.trim());
       if (!items.length && !confirm('品目が0件です。この引き出しを空として記録しますか？')) return;
-      // ユーザーが目で確認した時点で確信度は「高」扱いにする。名前を修正した新規品目も確認済み。
       const finalItems = items.map(i => Object.assign({}, i, { needsReview: false }));
       showOverlay('シートに書き込み中…');
       google.script.run
@@ -411,10 +496,7 @@
           $('shortage').innerHTML = res.shortage.length
             ? `<div class="banner warn">買い足しが必要: ` + res.shortage.map(s => `${esc(s.name)}${s.product ? ' → ' + esc(s.product) : ''}（あと${s.shortage}）`).join('、') + '</div>'
             : '<p class="muted">最低在庫を下回っている品目はありません。</p>';
-          $('resultSection').classList.add('hidden');
-          $('photoSection').classList.add('hidden');
-          $('doneSection').classList.remove('hidden');
-          $('doneSection').scrollIntoView({ behavior: 'smooth' });
+          showDone();
         })
         .withFailureHandler(fail)
         .apiCommit($('drawer').value, finalItems, {
@@ -425,12 +507,96 @@
         });
     });
 
+    // ---------- 登録モード: 結果の編集 ----------
+    function renderProducts() {
+      const C = state.config.confidenceLabels;
+      const catOptions = (cur) => CATEGORIES.map(c => `<option value="${c}" ${c === cur ? 'selected' : ''}>${c}</option>`).join('');
+      $('products').innerHTML = state.products.map((pr, i) => `
+        <div class="item" data-i="${i}">
+          <div class="field-label">種類名（品目名）</div>
+          <div class="row name">
+            <input type="text" list="masterList" value="${esc(pr.name)}" data-f="name" placeholder="例: 食器用洗剤 詰め替え">
+            <button class="del" data-del="${i}" aria-label="削除">🗑</button>
+          </div>
+          <div class="field-label">定番商品（いつも買う商品名）</div>
+          <div class="row">
+            <input type="text" class="grow" value="${esc(pr.product)}" data-f="product" placeholder="例: キュキュット クリア除菌 詰替 770ml">
+          </div>
+          <div class="row">
+            <input type="text" class="unit" value="${esc(pr.unit)}" data-f="unit" placeholder="単位">
+            <select data-f="category" style="flex:1">${catOptions(pr.category)}</select>
+            <input type="number" min="0" step="1" value="${pr.minStock === undefined || pr.minStock === null ? '' : pr.minStock}" data-f="minStock" placeholder="最低在庫" inputmode="numeric" style="width:90px">
+          </div>
+          <div class="row">
+            <input type="text" class="grow" value="${esc(pr.aliases)}" data-f="aliases" placeholder="別名（カンマ区切り）">
+          </div>
+          <div class="row">
+            <span class="badge ${pr.confidence}">確信度: ${C[pr.confidence] || pr.confidence}</span>
+            ${masterHas(pr.name) ? '<span class="badge high">登録済み → 定番商品を更新</span>' : '<span class="badge new">新規登録</span>'}
+            ${pr.note ? `<span class="note">${esc(pr.note)}</span>` : ''}
+          </div>
+        </div>`).join('') || '<p class="muted">商品を読み取れませんでした。行を追加して手入力できます。</p>';
+
+      $('products').querySelectorAll('[data-f]').forEach(el => {
+        el.addEventListener('input', () => {
+          const i = Number(el.closest('.item').dataset.i);
+          state.products[i][el.dataset.f] = el.value;
+        });
+      });
+      $('products').querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => {
+        state.products.splice(Number(b.dataset.del), 1);
+        renderProducts();
+      }));
+    }
+
+    function masterHas(name) {
+      return state.master.some(m => m.name === name);
+    }
+
+    $('addProductBtn').addEventListener('click', () => {
+      state.products.push({ name: '', product: '', unit: '個', category: 'その他', aliases: '', minStock: '', confidence: 'high', note: '' });
+      renderProducts();
+      const last = $('products').querySelector('.item:last-child input[data-f=name]');
+      if (last) last.focus();
+    });
+
+    $('saveProductsBtn').addEventListener('click', () => {
+      clearError();
+      const products = state.products.filter(p => p.name && p.name.trim());
+      if (!products.length) { showError('登録する商品がありません。'); return; }
+      showOverlay('品目マスタに書き込み中…');
+      google.script.run
+        .withSuccessHandler((res) => {
+          hideOverlay();
+          $('doneMsg').textContent =
+            (res.added.length ? `追加: ${res.added.join('、')}` : '') +
+            (res.added.length && res.updated.length ? ' / ' : '') +
+            (res.updated.length ? `更新: ${res.updated.join('、')}` : '') || '変更はありませんでした。';
+          $('shortage').innerHTML = '';
+          // マスタを再読み込みして次の撮影に反映する
+          google.script.run.withSuccessHandler((data) => {
+            state.master = data.master;
+            renderMasterList();
+          }).apiGetInitialData();
+          showDone();
+        })
+        .withFailureHandler(fail)
+        .apiSaveProducts(products);
+    });
+
+    // ---------- 完了 ----------
+    function showDone() {
+      $('resultSection').classList.add('hidden');
+      $('productSection').classList.add('hidden');
+      $('photoSection').classList.add('hidden');
+      $('doneSection').classList.remove('hidden');
+      $('doneSection').scrollIntoView({ behavior: 'smooth' });
+    }
+
     $('againBtn').addEventListener('click', () => {
-      state.photos = []; state.result = null; state.items = [];
-      renderThumbs();
-      $('doneSection').classList.add('hidden');
-      $('photoSection').classList.remove('hidden');
-      loadPrev();
+      resetFlow();
+      if (state.mode === 'count') loadPrev();
+      else $('masterCount').textContent = `現在の品目マスタ: ${state.master.length} 件（定番商品あり ${state.master.filter(m => m.product).length} 件）`;
       updateRecognizeBtn();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });

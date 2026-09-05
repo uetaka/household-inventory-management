@@ -127,6 +127,41 @@ function apiCommit(drawerId, items, meta) {
   };
 }
 
+// ---------- 商品登録モード ----------
+
+/** 商品の写真から登録候補を読み取る。まだシートには書かない。 */
+function apiRecognizeProducts(photos) {
+  const master = getItemMaster();
+  const result = recognizeProducts(photos, master);
+  let photoUrls = [];
+  if (CONFIG.SAVE_PHOTOS) {
+    try { photoUrls = savePhotos_({ id: 'MASTER' }, photos); } catch (e) { Logger.log('写真の保存に失敗: ' + e.message); }
+  }
+  return {
+    products: result.products,
+    notes: result.notes,
+    usage: { input: result.usage.input_tokens || 0, output: result.usage.output_tokens || 0 },
+    model: result.model,
+    photoUrls: photoUrls,
+  };
+}
+
+/** 確認済みの商品情報を品目マスタに登録する。 */
+function apiSaveProducts(products) {
+  const cleaned = (products || []).map(function (pr) {
+    return {
+      name: String(pr.name || '').trim(),
+      product: String(pr.product || '').trim(),
+      unit: String(pr.unit || '').trim(),
+      category: String(pr.category || '').trim(),
+      aliases: String(pr.aliases || '').trim(),
+      minStock: pr.minStock === '' || pr.minStock === undefined || pr.minStock === null ? '' : Number(pr.minStock),
+    };
+  }).filter(function (pr) { return pr.name; });
+  const result = upsertItemMaster_(cleaned);
+  return { ok: true, added: result.added, updated: result.updated };
+}
+
 // ---------- 写真の保存 ----------
 
 function getPhotoFolder_() {

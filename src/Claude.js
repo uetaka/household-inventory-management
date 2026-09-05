@@ -135,38 +135,8 @@ function recognizeInventory(images, drawer, master, previous) {
     messages: [{ role: 'user', content: content }],
   };
 
-  const response = UrlFetchApp.fetch(CLAUDE_API_URL, {
-    method: 'post',
-    contentType: 'application/json',
-    headers: claudeHeaders_({ 'anthropic-beta': 'server-side-fallback-2026-07-01' }),
-    payload: JSON.stringify(body),
-    muteHttpExceptions: true,
-  });
-
-  const status = response.getResponseCode();
-  const text = response.getContentText();
-  if (status !== 200) {
-    throw new Error('Claude API エラー (HTTP ' + status + '): ' + summarizeApiError_(text));
-  }
-
-  const json = JSON.parse(text);
-  if (json.stop_reason === 'refusal') {
-    const detail = json.stop_details && json.stop_details.explanation ? json.stop_details.explanation : '';
-    throw new Error('Claude が処理を拒否しました。' + detail);
-  }
-  if (json.stop_reason === 'max_tokens') {
-    throw new Error('出力が長すぎて途中で切れました。写真の枚数を減らすか Config の MAX_TOKENS を増やしてください。');
-  }
-
-  const textBlock = (json.content || []).filter(function (b) { return b.type === 'text'; })[0];
-  if (!textBlock) throw new Error('Claude から文字列の応答がありませんでした。');
-
-  let parsed;
-  try {
-    parsed = JSON.parse(textBlock.text);
-  } catch (e) {
-    throw new Error('Claude の応答を JSON として読めませんでした: ' + textBlock.text.slice(0, 200));
-  }
+  const json = callClaude_(body);
+  const parsed = parseStructuredText_(json);
 
   const items = (parsed.items || []).map(function (it) {
     return {
@@ -188,6 +158,134 @@ function recognizeInventory(images, drawer, master, previous) {
     usage: json.usage || {},
     model: json.model || CONFIG.MODEL,
   };
+}
+
+// ---------- 商品登録（品目マスタ作成用） ----------
+
+const PRODUCT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['products', 'notes'],
+  properties: {
+    products: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['name', 'product', 'unit', 'category', 'aliases', 'exists_in_master', 'confidence', 'note'],
+        properties: {
+          name: { type: 'string', description: '品目名（種類名）。品目マスタにあればその正規名。ブランド名は含めない。' },
+          product: { type: 'string', description: 'パッケージから読める正式な商品名。ブランド + 商品名 + 容量や枚数（例: 「キュキュット クリア除菌 詰替 770ml」）。' },
+          unit: { type: 'string', description: '在庫を数えるときの単位（個・本・袋・ロール・箱・パックなど）。' },
+          category: { type: 'string', enum: ['洗面', 'バス', 'トイレ', 'キッチン', '洗濯', '日用品', '電池', 'その他'] },
+          aliases: { type: 'string', description: '種類名の言い換え候補をカンマ区切りで（例: 「食器洗剤,食器用洗剤 詰替」）。無ければ空文字。' },
+          exists_in_master: { type: 'boolean', description: '同じ種類の品目が品目マスタに既にあるなら true。' },
+          confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+          note: { type: 'string', description: '読み取れなかった部分や補足。無ければ空文字。' },
+        },
+      },
+    },
+    notes: { type: 'string' },
+  },
+};
+
+function buildProductSystemPrompt_(master) {
+  const masterLines = master.length
+    ? master.map(function (m) {
+        return '- ' + m.name + ' | 単位: ' + (m.unit || '個') + (m.product ? ' | 定番商品: ' + m.product : '') + (m.aliases.length ? ' | 別名: ' + m.aliases.join('、') : '');
+      }).join('\n')
+    : '（未登録）';
+  return [
+    'あなたは家庭の日用品の「品目マスタ」を作る担当者です。',
+    '渡される写真には、登録したい商品がパッケージが読める距離で写っています。1枚に複数の商品が写っていることもあります。',
+    '数量は数えなくてよい。写っている商品を1種類ずつ、登録用の情報として読み取ってください。',
+    '',
+    'ルール:',
+    '1. name は種類名。既に品目マスタにある種類なら必ずその正規名を使い exists_in_master を true にする。無ければ日本の家庭で通じる種類名を付ける（例: 「食器用洗剤 詰め替え」）。詰め替え用と本体ボトルは別の種類にする。',
+    '2. product はパッケージから読める正式な商品名。ブランド、商品名、容量や枚数まで含める。読めない部分は推測せず、読めた範囲だけ書いて note に「容量が読めない」などと書く。',
+    '3. unit は在庫を数えるときの単位。category は最も近いものを選ぶ。',
+    '4. aliases は、その種類名を人が呼びそうな別の言い方（略称、表記ゆれ）。',
+    '5. 同じ商品が複数個写っていても1件にまとめる。',
+    '',
+    '品目マスタ:',
+    masterLines,
+  ].join('\n');
+}
+
+/**
+ * 商品の写真から品目マスタ登録用の情報を読み取る。
+ */
+function recognizeProducts(images, master) {
+  if (!images || !images.length) throw new Error('写真がありません。');
+  if (images.length > CONFIG.MAX_PHOTOS) throw new Error('写真は ' + CONFIG.MAX_PHOTOS + ' 枚までです。');
+
+  const content = images.map(function (img) {
+    return { type: 'image', source: { type: 'base64', media_type: img.mediaType || 'image/jpeg', data: img.data } };
+  });
+  content.push({ type: 'text', text: '上の写真に写っている商品を、品目マスタ登録用に読み取って JSON で返してください。' });
+
+  const body = {
+    model: CONFIG.MODEL,
+    max_tokens: CONFIG.MAX_TOKENS,
+    thinking: { type: 'adaptive' },
+    output_config: { effort: CONFIG.EFFORT, format: { type: 'json_schema', schema: PRODUCT_SCHEMA } },
+    fallbacks: 'default',
+    system: buildProductSystemPrompt_(master),
+    messages: [{ role: 'user', content: content }],
+  };
+
+  const json = callClaude_(body);
+  const parsed = parseStructuredText_(json);
+  const products = (parsed.products || []).map(function (pr) {
+    return {
+      name: String(pr.name || '').trim(),
+      product: String(pr.product || '').trim(),
+      unit: String(pr.unit || '').trim() || '個',
+      category: String(pr.category || '').trim(),
+      aliases: String(pr.aliases || '').trim(),
+      existsInMaster: pr.exists_in_master === true,
+      confidence: pr.confidence || 'medium',
+      note: String(pr.note || '').trim(),
+    };
+  }).filter(function (pr) { return pr.name; });
+
+  return { products: products, notes: String(parsed.notes || ''), usage: json.usage || {}, model: json.model || CONFIG.MODEL };
+}
+
+/** Messages API を呼んで HTTP エラーと拒否を処理し、JSON を返す。 */
+function callClaude_(body) {
+  const response = UrlFetchApp.fetch(CLAUDE_API_URL, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: claudeHeaders_({ 'anthropic-beta': 'server-side-fallback-2026-07-01' }),
+    payload: JSON.stringify(body),
+    muteHttpExceptions: true,
+  });
+  const status = response.getResponseCode();
+  const text = response.getContentText();
+  if (status !== 200) {
+    throw new Error('Claude API エラー (HTTP ' + status + '): ' + summarizeApiError_(text));
+  }
+  const json = JSON.parse(text);
+  if (json.stop_reason === 'refusal') {
+    const detail = json.stop_details && json.stop_details.explanation ? json.stop_details.explanation : '';
+    throw new Error('Claude が処理を拒否しました。' + detail);
+  }
+  if (json.stop_reason === 'max_tokens') {
+    throw new Error('出力が長すぎて途中で切れました。写真の枚数を減らすか Config の MAX_TOKENS を増やしてください。');
+  }
+  return json;
+}
+
+/** 構造化出力の text ブロックを JSON として取り出す。 */
+function parseStructuredText_(json) {
+  const textBlock = (json.content || []).filter(function (b) { return b.type === 'text'; })[0];
+  if (!textBlock) throw new Error('Claude から文字列の応答がありませんでした。');
+  try {
+    return JSON.parse(textBlock.text);
+  } catch (e) {
+    throw new Error('Claude の応答を JSON として読めませんでした: ' + textBlock.text.slice(0, 200));
+  }
 }
 
 function summarizeApiError_(text) {

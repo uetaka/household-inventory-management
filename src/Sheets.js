@@ -109,6 +109,48 @@ function addNewItemsToMaster_(items) {
   return additions.map(function (a) { return a[0]; });
 }
 
+/**
+ * 商品登録モードからのマスタ更新。
+ * 同じ品目名があれば「定番商品」「単位」「カテゴリ」の空欄を埋めて別名をマージし、無ければ行を追加する。
+ */
+function upsertItemMaster_(products) {
+  const sheet = getSheet_(CONFIG.SHEETS.ITEMS);
+  const rows = readTable_(sheet);
+  const byName = {};
+  rows.forEach(function (r) { byName[toStr_(r['品目名'])] = r; });
+  const added = [], updated = [];
+
+  products.forEach(function (pr) {
+    const name = toStr_(pr.name);
+    if (!name) return;
+    const aliases = toStr_(pr.aliases).split(/[,、，]/).map(function (a) { return a.trim(); }).filter(function (a) { return a && a !== name; });
+    const existing = byName[name];
+    if (existing) {
+      const row = existing._row;
+      const current = {
+        unit: toStr_(existing['単位']),
+        aliases: toStr_(existing['別名']).split(/[,、，]/).map(function (a) { return a.trim(); }).filter(Boolean),
+        category: toStr_(existing['カテゴリ']),
+        product: toStr_(existing['定番商品']),
+      };
+      const mergedAliases = current.aliases.slice();
+      aliases.forEach(function (a) { if (mergedAliases.indexOf(a) === -1) mergedAliases.push(a); });
+      // 定番商品は画面で入力された値を優先（人が確認済み）。空なら既存を維持。
+      const product = toStr_(pr.product) || current.product;
+      sheet.getRange(row, 2).setValue(current.unit || toStr_(pr.unit) || '個');
+      sheet.getRange(row, 3).setValue(mergedAliases.join(','));
+      sheet.getRange(row, 5).setValue(current.category || toStr_(pr.category));
+      sheet.getRange(row, 6).setValue(product);
+      updated.push(name);
+    } else {
+      sheet.appendRow([name, toStr_(pr.unit) || '個', aliases.join(','), toNum_(pr.minStock, ''), toStr_(pr.category), toStr_(pr.product), '']);
+      byName[name] = { _row: sheet.getLastRow() };
+      added.push(name);
+    }
+  });
+  return { added: added, updated: updated };
+}
+
 // ---------- 在庫 ----------
 
 function getInventoryForDrawer(drawerId) {
