@@ -65,6 +65,12 @@
     .missing-row input[type=checkbox] { width: 20px; height: 20px; }
     .stepper { display: flex; gap: 4px; }
     .stepper button { width: 36px; padding: 6px 0; margin: 0; font-size: 18px; }
+    details.tips { margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 13px; color: var(--muted); }
+    details.tips summary { cursor: pointer; font-weight: 600; color: var(--text); font-size: 14px; }
+    details.tips ul { margin: 8px 0 4px; padding-left: 18px; }
+    details.tips li { margin-bottom: 4px; }
+    details.tips li + li.head { margin-top: 8px; }
+    details.tips li.head { list-style: none; margin-left: -18px; color: var(--text); font-weight: 600; }
   </style>
 </head>
 <body>
@@ -128,6 +134,24 @@
         </label>
       </div>
       <p class="muted" id="photoHint"></p>
+      <details class="tips mode-count" id="photoTips">
+        <summary>撮影の心得（隠れて写らない物を減らす）</summary>
+        <ul>
+          <li class="head">撮り方</li>
+          <li>引き出しを全部引き出すか、トレイごと取り出して明るい場所で撮る。Claude は写っている物しか数えません</li>
+          <li>一段に並んだ物は真上から。立てた物は斜め上から、全部の口やキャップが見える角度で</li>
+          <li>奥行きがあるときは手前と奥、左右で区画を分けて撮る。同じ場所の別区画として二重には数えません</li>
+          <li>ずらして重ねた物は見えている端の数で数えます。端がつぶれるほど重ねない</li>
+          <li>ラベル面を手前に。無地の袋や箱はマスキングテープに品名を書いて貼る</li>
+          <li class="head">隠れない収納にしておく</li>
+          <li>浅いトレイを入れて一段しか置けない状態にする</li>
+          <li>袋物やパウチはファイルボックスに立てて口を上に揃える。細長いトレイに立てれば、トレイごと出して斜めから撮れます</li>
+          <li>奥は階段状のライザーでひな壇にする</li>
+          <li>仕切りケースに1マス1個で入れ、引き出しのメモ欄に「1マス1個、全12マス」と書いておく</li>
+          <li>同じ品目は1カ所にまとめる。不透明な物は透明容器に移す</li>
+          <li>まとめ買いの袋物は「袋」単位で登録し、個数で管理したい物だけ小分けする</li>
+        </ul>
+      </details>
       <div class="thumbs" id="thumbs"></div>
       <button class="primary" id="recognizeBtn" disabled>Claude に数えてもらう</button>
     </section>
