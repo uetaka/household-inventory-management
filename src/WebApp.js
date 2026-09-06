@@ -31,6 +31,18 @@ function apiGetInitialData() {
   };
 }
 
+/** 引き出しを追加し、並び順を反映した最新の一覧を返す。 */
+function apiAddDrawer(input) {
+  const id = addDrawer(input || {});
+  return { id: id, drawers: getDrawers() };
+}
+
+/** 画面で並べ替えた順序をシートに保存し、最新の一覧を返す。 */
+function apiSaveDrawerOrder(ids) {
+  saveDrawerOrder(ids || []);
+  return { drawers: getDrawers() };
+}
+
 /** 引き出しを選んだときの現在在庫。 */
 function apiGetDrawerInventory(drawerId) {
   const inv = getInventoryForDrawer(drawerId);

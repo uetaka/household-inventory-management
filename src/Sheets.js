@@ -49,6 +49,10 @@ function toNum_(v, fallback) {
 
 // ---------- 引き出し ----------
 
+/**
+ * 引き出しの一覧。アプリの選択肢はこの順で並ぶ。
+ * 「表示順」列の昇順、未設定の行はその後ろにシートの行順で並べる。
+ */
 function getDrawers() {
   return readTable_(getSheet_(CONFIG.SHEETS.DRAWERS))
     .map(function (r) {
@@ -57,15 +61,133 @@ function getDrawers() {
         name: toStr_(r['名前']),
         location: toStr_(r['場所']),
         note: toStr_(r['備考']),
+        order: toOrder_(r['表示順']),
+        _row: r._row,
       };
     })
-    .filter(function (d) { return d.id && d.name; });
+    .filter(function (d) { return d.id && d.name; })
+    .sort(function (a, b) {
+      const ao = a.order === null ? Infinity : a.order;
+      const bo = b.order === null ? Infinity : b.order;
+      return ao === bo ? a._row - b._row : ao - bo;
+    })
+    .map(function (d) { delete d._row; return d; });
+}
+
+/** 表示順のセル値を数値に。空欄や数値でない物は null。 */
+function toOrder_(v) {
+  if (v === '' || v === null || v === undefined) return null;
+  const n = Number(v);
+  return isNaN(n) ? null : n;
 }
 
 function getDrawer_(drawerId) {
   const d = getDrawers().filter(function (x) { return x.id === drawerId; })[0];
   if (!d) throw new Error('引き出しID「' + drawerId + '」が見つかりません。');
   return d;
+}
+
+/**
+ * 引き出しシートの列位置をヘッダー名から引く（1始まり）。
+ * 古いシートに「表示順」列が無い場合は createOrder が true のときだけ追加する。
+ */
+function drawerColumns_(sheet, createOrder) {
+  const H = CONFIG.HEADERS.DRAWERS;
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+  const find = function (name) {
+    const i = headers.indexOf(name);
+    if (i === -1) throw new Error('引き出しシートに「' + name + '」列がありません。メニューの「在庫管理 > 初期設定」を実行してください。');
+    return i + 1;
+  };
+  const cols = { id: find(H[0]), name: find(H[1]), location: find(H[2]), note: find(H[3]) };
+  let orderCol = headers.indexOf(H[4]) + 1;
+  if (!orderCol && createOrder) {
+    orderCol = Math.max(lastCol + 1, H.length);
+    sheet.getRange(1, orderCol).setValue(H[4]).setFontWeight('bold').setBackground('#e8eaed');
+  }
+  cols.order = orderCol;
+  return cols;
+}
+
+/**
+ * 引き出しを1件追加する。ID は D01, D02… の続き番号を自動で振る。
+ * 表示順は既存の最大値 + 1（誰も表示順を使っていなければ空欄のまま末尾に並ぶ）。
+ * @return {string} 追加した引き出しID
+ */
+function addDrawer(input) {
+  const name = toStr_(input && input.name);
+  if (!name) throw new Error('引き出しの名前を入力してください。');
+  const location = toStr_(input && input.location);
+  const note = toStr_(input && input.note);
+
+  const sheet = getSheet_(CONFIG.SHEETS.DRAWERS);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const rows = readTable_(sheet);
+    const used = {};
+    let maxNum = 0, maxOrder = 0, hasOrder = false;
+    rows.forEach(function (r) {
+      const id = toStr_(r['引き出しID']);
+      if (id) used[id] = true;
+      const m = /^D(\d+)$/i.exec(id);
+      if (m) maxNum = Math.max(maxNum, Number(m[1]));
+      const o = toOrder_(r['表示順']);
+      if (o !== null) { hasOrder = true; maxOrder = Math.max(maxOrder, o); }
+      if (toStr_(r['名前']) === name && toStr_(r['場所']) === location) {
+        throw new Error('同じ名前・場所の引き出し「' + name + '」が既にあります。');
+      }
+    });
+    let id;
+    do {
+      maxNum++;
+      id = 'D' + (maxNum < 10 ? '0' + maxNum : String(maxNum));
+    } while (used[id]);
+
+    const cols = drawerColumns_(sheet, true);
+    const row = [];
+    for (let i = 0; i < Math.max(cols.id, cols.name, cols.location, cols.note, cols.order); i++) row.push('');
+    row[cols.id - 1] = id;
+    row[cols.name - 1] = name;
+    row[cols.location - 1] = location;
+    row[cols.note - 1] = note;
+    row[cols.order - 1] = hasOrder ? maxOrder + 1 : '';
+    sheet.appendRow(row);
+    return id;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * アプリで並べ替えた順序を「表示順」列に 1, 2, 3… として書き込む。
+ * 一覧に無い行（名前が空など）は既存の値をそのまま残す。
+ * @param {string[]} ids 表示したい順に並べた引き出しID
+ */
+function saveDrawerOrder(ids) {
+  ids = (ids || []).map(toStr_).filter(Boolean);
+  const pos = {};
+  ids.forEach(function (id, i) { if (!pos[id]) pos[id] = i + 1; });
+
+  const sheet = getSheet_(CONFIG.SHEETS.DRAWERS);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const cols = drawerColumns_(sheet, true);
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return;
+    const idValues = sheet.getRange(2, cols.id, lastRow - 1, 1).getValues();
+    const orderRange = sheet.getRange(2, cols.order, lastRow - 1, 1);
+    const current = orderRange.getValues();
+    const next = idValues.map(function (r, i) {
+      const id = toStr_(r[0]);
+      return [pos[id] ? pos[id] : current[i][0]];
+    });
+    orderRange.setValues(next);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ---------- 品目マスタ ----------
