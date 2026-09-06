@@ -190,11 +190,13 @@
       </details>
       <div class="thumbs" id="thumbs"></div>
       <button class="primary" id="recognizeBtn" disabled>Claude に数えてもらう</button>
+      <button id="manualBtn" disabled>✎ 写真なしで手入力する</button>
+      <p class="muted" id="manualHint" style="margin:6px 0 0"></p>
     </section>
 
     <!-- 在庫モード 結果 -->
     <section class="card hidden" id="resultSection">
-      <h2>3. 確認して確定</h2>
+      <h2 id="resultTitle">3. 確認して確定</h2>
       <div id="notes" class="banner warn hidden"></div>
       <div id="items"></div>
       <button id="addRowBtn">＋ 行を追加</button>
@@ -235,6 +237,7 @@
     const CATEGORIES = ['洗面', 'バス', 'トイレ', 'キッチン', '洗濯', '日用品', '電池', 'その他'];
     const state = {
       mode: 'count',        // 'count' | 'register'
+      manual: false,        // 写真なしの手入力フローか
       drawers: [], master: [], config: {},
       photos: [],           // { data, mediaType, preview }
       result: null,         // 認識 API の返り値
@@ -320,10 +323,12 @@
         $('photoTitle').textContent = '2. 中身を撮る';
         $('photoHint').innerHTML = `真上から、物を重ねずに。ボタンを押すたびに1枚ずつ追加され、${state.config.maxPhotos}枚までまとめて認識します。`;
         $('recognizeBtn').textContent = 'Claude に数えてもらう';
+        $('manualHint').textContent = '手入力では前回の在庫を出発点に、数量を直したり品目を足したりして確定します。Claude は使いません。';
       } else {
         $('photoTitle').textContent = '商品を撮る';
         $('photoHint').innerHTML = `パッケージの商品名・容量が読める距離で。${state.config.maxPhotos}枚までまとめて読み取ります。`;
         $('recognizeBtn').textContent = 'Claude に読み取ってもらう';
+        $('manualHint').textContent = '手入力では品目名や定番商品を直接入力して登録します。Claude は使いません。';
         $('masterCount').textContent = `現在の品目マスタ: ${state.master.length} 件（定番商品あり ${state.master.filter(m => m.product).length} 件）`;
       }
       updateRecognizeBtn();
@@ -331,6 +336,7 @@
 
     function resetFlow() {
       state.photos = []; state.result = null; state.items = []; state.products = []; state.missing = [];
+      state.manual = false;
       renderThumbs();
       $('resultSection').classList.add('hidden');
       $('productSection').classList.add('hidden');
@@ -529,12 +535,14 @@
     function updateRecognizeBtn() {
       const needDrawer = state.mode === 'count';
       $('recognizeBtn').disabled = !((!needDrawer || $('drawer').value) && state.photos.length);
+      $('manualBtn').disabled = needDrawer && !$('drawer').value;
     }
 
     // ---------- 認識 ----------
     $('recognizeBtn').addEventListener('click', () => {
       clearError();
       const payload = state.photos.map(p => ({ data: p.data, mediaType: p.mediaType }));
+      state.manual = false;
       if (state.mode === 'count') {
         showOverlay('Claude が数えています…（20〜40秒）');
         google.script.run
@@ -548,6 +556,7 @@
             $('notes').textContent = res.notes || '';
             $('notes').classList.toggle('hidden', !res.notes);
             $('usage').textContent = usageText(res);
+            $('resultTitle').textContent = '3. 確認して確定';
             $('resultSection').classList.remove('hidden');
             $('resultSection').scrollIntoView({ behavior: 'smooth' });
           })
@@ -571,6 +580,74 @@
           .apiRecognizeProducts(payload);
       }
     });
+
+    // ---------- 写真なしで手入力 ----------
+    $('manualBtn').addEventListener('click', () => {
+      clearError();
+      state.manual = true;
+      state.result = null;
+      state.photos = [];
+      renderThumbs();
+      updateRecognizeBtn();
+      if (state.mode === 'count') {
+        const drawerId = $('drawer').value;
+        if (!drawerId) { showError('先に引き出しを選んでください。'); return; }
+        showOverlay('前回の在庫を読み込み中…');
+        google.script.run
+          .withSuccessHandler((res) => {
+            hideOverlay();
+            // 前回の在庫を出発点にする。残量はシートに表示名で入っているのでキーに戻す。
+            // 前回の据え置きメモや要確認は今回の手入力で確認済みになるので引き継がない。
+            state.items = res.items.map(i => ({
+              name: i.name, quantity: i.quantity, unit: i.unit,
+              remaining: remainingKey(i.remaining), confidence: 'high',
+              isNew: !masterHas(i.name), product: i.product || '', note: '', needsReview: false,
+            }));
+            state.missing = [];
+            if (!state.items.length) state.items.push(blankItem());
+            renderItems();
+            renderMissing();
+            $('notes').classList.add('hidden');
+            $('usage').textContent = res.items.length
+              ? '前回の在庫を出発点にしています。数量を直したり、行を足したり消したりして確定してください。'
+              : 'この引き出しはまだ記録がありません。品目を入力して確定してください。';
+            $('resultTitle').textContent = '2. 手入力して確定';
+            $('photoSection').classList.add('hidden');
+            $('resultSection').classList.remove('hidden');
+            $('resultSection').scrollIntoView({ behavior: 'smooth' });
+            if (!res.items.length) {
+              const first = $('items').querySelector('.item input[data-f=name]');
+              if (first) first.focus();
+            }
+          })
+          .withFailureHandler(fail)
+          .apiGetDrawerInventory(drawerId);
+      } else {
+        state.products = [blankProduct()];
+        renderProducts();
+        $('productNotes').classList.add('hidden');
+        $('productUsage').textContent = '';
+        $('photoSection').classList.add('hidden');
+        $('productSection').classList.remove('hidden');
+        $('productSection').scrollIntoView({ behavior: 'smooth' });
+        const first = $('products').querySelector('.item input[data-f=name]');
+        if (first) first.focus();
+      }
+    });
+
+    /** 残量目安の表示名（未開封/満 など）をキー（full など）に戻す。キーのままでも通す。 */
+    function remainingKey(label) {
+      const R = state.config.remainingLabels;
+      return Object.keys(R).find(k => k === label || R[k] === label) || 'unknown';
+    }
+
+    function blankItem() {
+      return { name: '', quantity: 1, unit: '個', remaining: 'full', confidence: 'high', isNew: false, product: '', note: '', needsReview: false };
+    }
+
+    function blankProduct() {
+      return { name: '', product: '', unit: '個', category: 'その他', aliases: '', minStock: '', confidence: 'high', note: '' };
+    }
 
     function usageText(res) {
       return `入力 ${res.usage.input} / 出力 ${res.usage.output} トークン（${res.model}）`;
@@ -596,7 +673,7 @@
             <select data-f="remaining">${remainingOptions(it.remaining)}</select>
           </div>
           <div class="row">
-            <span class="badge ${it.confidence}">確信度: ${C[it.confidence] || it.confidence}</span>
+            ${state.manual ? '' : `<span class="badge ${it.confidence}">確信度: ${C[it.confidence] || it.confidence}</span>`}
             ${it.isNew ? '<span class="badge new">新規品目</span>' : ''}
             ${it.product ? `<span class="badge">見えた商品: ${esc(it.product)}</span>` : ''}
             ${masterProduct(it.name) ? `<span class="badge high">定番: ${esc(masterProduct(it.name))}</span>` : ''}
@@ -650,7 +727,7 @@
     }
 
     $('addRowBtn').addEventListener('click', () => {
-      state.items.push({ name: '', quantity: 1, unit: '個', remaining: 'full', confidence: 'high', isNew: false, product: '', note: '', needsReview: false });
+      state.items.push(blankItem());
       renderItems();
       const last = $('items').querySelector('.item:last-child input[data-f=name]');
       if (last) last.focus();
@@ -684,6 +761,7 @@
           photoUrls: state.result ? state.result.photoUrls : [],
           usage: state.result ? state.result.usage : null,
           model: state.result ? state.result.model : null,
+          manual: state.manual,
         });
     });
 
@@ -711,7 +789,7 @@
             <input type="text" class="grow" value="${esc(pr.aliases)}" data-f="aliases" placeholder="別名（カンマ区切り）">
           </div>
           <div class="row">
-            <span class="badge ${pr.confidence}">確信度: ${C[pr.confidence] || pr.confidence}</span>
+            ${state.manual ? '' : `<span class="badge ${pr.confidence}">確信度: ${C[pr.confidence] || pr.confidence}</span>`}
             ${masterHas(pr.name) ? '<span class="badge high">登録済み → 定番商品を更新</span>' : '<span class="badge new">新規登録</span>'}
             ${pr.note ? `<span class="note">${esc(pr.note)}</span>` : ''}
           </div>
@@ -734,7 +812,7 @@
     }
 
     $('addProductBtn').addEventListener('click', () => {
-      state.products.push({ name: '', product: '', unit: '個', category: 'その他', aliases: '', minStock: '', confidence: 'high', note: '' });
+      state.products.push(blankProduct());
       renderProducts();
       const last = $('products').querySelector('.item:last-child input[data-f=name]');
       if (last) last.focus();
@@ -766,6 +844,7 @@
 
     // ---------- 完了 ----------
     function showDone() {
+      $('againBtn').textContent = state.manual ? '続ける' : '続けて撮る';
       $('resultSection').classList.add('hidden');
       $('productSection').classList.add('hidden');
       $('photoSection').classList.add('hidden');

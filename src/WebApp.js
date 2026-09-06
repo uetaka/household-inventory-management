@@ -98,7 +98,8 @@ function apiRecognize(drawerId, photos) {
  * 確認済みの内容でシートを更新する。
  * @param {string} drawerId
  * @param {Array} items 画面で修正済みの品目
- * @param {Object} meta { recognized, photoUrls, usage, model }
+ * @param {Object} meta { recognized, photoUrls, usage, model, manual }
+ *   manual が true なら写真なしの手入力。履歴のモデル列には「手入力」と記録する。
  */
 function apiCommit(drawerId, items, meta) {
   const drawer = getDrawer_(drawerId);
@@ -134,7 +135,7 @@ function apiCommit(drawerId, items, meta) {
     user: user,
     inputTokens: meta.usage ? meta.usage.input : '',
     outputTokens: meta.usage ? meta.usage.output : '',
-    model: meta.model || CONFIG.MODEL,
+    model: meta.manual ? '手入力' : (meta.model || CONFIG.MODEL),
   });
 
   const shortage = refreshShoppingList();
