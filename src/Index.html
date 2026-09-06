@@ -58,6 +58,11 @@
     .overlay { position: fixed; inset: 0; background: rgba(255,255,255,.85); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; font-size: 15px; }
     .spinner { width: 36px; height: 36px; border: 4px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 12px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .missing-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 15px; }
+    .missing-row:first-child { border-top: none; }
+    .missing-row .grow { flex: 1; }
+    .missing-row label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 14px; color: var(--text); white-space: nowrap; }
+    .missing-row input[type=checkbox] { width: 20px; height: 20px; }
     .stepper { display: flex; gap: 4px; }
     .stepper button { width: 36px; padding: 6px 0; margin: 0; font-size: 18px; }
   </style>
@@ -133,6 +138,11 @@
       <div id="notes" class="banner warn hidden"></div>
       <div id="items"></div>
       <button id="addRowBtn">＋ 行を追加</button>
+      <div id="missingBlock" class="hidden" style="margin-top:14px">
+        <h2>前回あったのに今回写っていない品目</h2>
+        <p class="muted" style="margin:0 0 6px">チェックなし = なくなった（この引き出しの在庫 0）。写っていないだけなら「据え置く」にチェック。</p>
+        <div id="missing"></div>
+      </div>
       <p class="muted" id="usage"></p>
       <button class="primary" id="commitBtn">この内容でシートを更新</button>
     </section>
@@ -169,6 +179,7 @@
       photos: [],           // { data, mediaType, preview }
       result: null,         // 認識 API の返り値
       items: [],            // 在庫モードの編集中データ
+      missing: [],          // 前回あって今回写っていない品目 { ..., keep: bool }
       products: [],         // 登録モードの編集中データ
     };
 
@@ -257,7 +268,7 @@
     }
 
     function resetFlow() {
-      state.photos = []; state.result = null; state.items = []; state.products = [];
+      state.photos = []; state.result = null; state.items = []; state.products = []; state.missing = [];
       renderThumbs();
       $('resultSection').classList.add('hidden');
       $('productSection').classList.add('hidden');
@@ -382,7 +393,9 @@
             hideOverlay();
             state.result = res;
             state.items = res.items.map(i => Object.assign({}, i));
+            state.missing = (res.missing || []).map(m => Object.assign({ keep: false }, m));
             renderItems();
+            renderMissing();
             $('notes').textContent = res.notes || '';
             $('notes').classList.toggle('hidden', !res.notes);
             $('usage').textContent = usageText(res);
@@ -461,6 +474,18 @@
       }));
     }
 
+    function renderMissing() {
+      $('missingBlock').classList.toggle('hidden', !state.missing.length);
+      $('missing').innerHTML = state.missing.map((m, i) => `
+        <div class="missing-row">
+          <span class="grow">${esc(m.name)} <span class="muted">× ${m.quantity} ${esc(m.unit)}</span></span>
+          <label><input type="checkbox" data-keep="${i}" ${m.keep ? 'checked' : ''}> 据え置く</label>
+        </div>`).join('');
+      $('missing').querySelectorAll('[data-keep]').forEach(cb => cb.addEventListener('change', () => {
+        state.missing[Number(cb.dataset.keep)].keep = cb.checked;
+      }));
+    }
+
     function masterProduct(name) {
       const m = state.master.find(m => m.name === name);
       return m && m.product ? m.product : '';
@@ -485,8 +510,14 @@
     $('commitBtn').addEventListener('click', () => {
       clearError();
       const items = state.items.filter(i => i.name && i.name.trim());
-      if (!items.length && !confirm('品目が0件です。この引き出しを空として記録しますか？')) return;
-      const finalItems = items.map(i => Object.assign({}, i, { needsReview: false }));
+      const names = new Set(items.map(i => i.name.trim()));
+      // 「据え置く」にした品目は前回の数量のまま残す（手入力で同名を足していれば重複させない）
+      const kept = state.missing.filter(m => m.keep && !names.has(m.name)).map(m => ({
+        name: m.name, quantity: m.quantity, unit: m.unit, remaining: m.remaining, confidence: 'medium',
+        product: m.product || '', note: '写真に写っていないため前回値を据え置き', needsReview: true,
+      }));
+      if (!items.length && !kept.length && !confirm('品目が0件です。この引き出しを空として記録しますか？')) return;
+      const finalItems = items.map(i => Object.assign({}, i, { needsReview: false })).concat(kept);
       showOverlay('シートに書き込み中…');
       google.script.run
         .withSuccessHandler((res) => {

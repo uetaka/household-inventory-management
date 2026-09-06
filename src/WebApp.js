@@ -52,6 +52,14 @@ function apiRecognize(drawerId, photos) {
 
   const result = recognizeInventory(photos, drawer, master, previous);
 
+  // 前回この引き出しにあったのに今回の認識に出てこなかった品目。
+  // 画面で「なくなった（0）」か「据え置き」を選んでもらう。
+  const seen = {};
+  result.items.forEach(function (it) { seen[it.name] = true; });
+  const missing = previous.filter(function (pv) { return pv.name && !seen[pv.name]; }).map(function (pv) {
+    return { name: pv.name, quantity: pv.quantity, unit: pv.unit, remaining: pv.remaining, product: pv.product, note: pv.note };
+  });
+
   let photoUrls = [];
   if (CONFIG.SAVE_PHOTOS) {
     try {
@@ -70,6 +78,7 @@ function apiRecognize(drawerId, photos) {
     },
     model: result.model,
     photoUrls: photoUrls,
+    missing: missing,
   };
 }
 

@@ -200,7 +200,7 @@ function replaceDrawerInventory_(drawer, items, now) {
         toStr_(it.name),
         toNum_(it.quantity, 0),
         toStr_(it.unit),
-        CONFIG.REMAINING_LABELS[it.remaining] || toStr_(it.remaining) || '',
+        remainingLabel_(it.remaining),
         CONFIG.CONFIDENCE_LABELS[it.confidence] || toStr_(it.confidence) || '',
         it.needsReview === true,
         now,
@@ -219,6 +219,13 @@ function replaceDrawerInventory_(drawer, items, now) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/** 残量目安のキー（full など）でも表示名（未開封/満 など）でも表示名に揃える。 */
+function remainingLabel_(v) {
+  const s = toStr_(v);
+  if (CONFIG.REMAINING_LABELS[s]) return CONFIG.REMAINING_LABELS[s];
+  return s;
 }
 
 // ---------- 履歴 ----------
