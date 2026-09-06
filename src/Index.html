@@ -65,6 +65,14 @@
     .missing-row input[type=checkbox] { width: 20px; height: 20px; }
     .stepper { display: flex; gap: 4px; }
     .stepper button { width: 36px; padding: 6px 0; margin: 0; font-size: 18px; }
+    .drawer-tools { display: flex; gap: 8px; }
+    .drawer-tools button { flex: 1; }
+    .subpanel { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+    .subpanel input[type=text] { margin-bottom: 8px; }
+    .order-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 15px; }
+    .order-row:first-child { border-top: none; }
+    .order-row .num { width: 22px; text-align: right; }
+    .order-row .grow { flex: 1; }
     details.tips { margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 13px; color: var(--muted); }
     details.tips summary { cursor: pointer; font-weight: 600; color: var(--text); font-size: 14px; }
     details.tips ul { margin: 8px 0 4px; padding-left: 18px; }
@@ -111,6 +119,34 @@
         <option value="">読み込み中…</option>
       </select>
       <div id="prev" class="muted" style="margin-top:8px"></div>
+      <div class="drawer-tools hidden" id="drawerTools">
+        <button id="addDrawerBtn">＋ 引き出しを追加</button>
+        <button id="reorderDrawersBtn">並べ替え</button>
+      </div>
+
+      <!-- 引き出しの追加 -->
+      <div class="subpanel hidden" id="addDrawerForm">
+        <label>名前</label>
+        <input type="text" id="newDrawerName" placeholder="例: 洗面台下" autocomplete="off">
+        <label>場所（任意）</label>
+        <input type="text" id="newDrawerLocation" placeholder="例: 洗面所" autocomplete="off">
+        <label>備考（任意。Claude に渡す場所の説明になります）</label>
+        <input type="text" id="newDrawerNote" placeholder="例: 1マス1個、全12マス" autocomplete="off">
+        <div class="drawer-tools">
+          <button id="cancelAddDrawerBtn">キャンセル</button>
+          <button class="primary" id="saveDrawerBtn">追加する</button>
+        </div>
+      </div>
+
+      <!-- 引き出しの並べ替え -->
+      <div class="subpanel hidden" id="reorderPanel">
+        <p class="muted" style="margin:0 0 6px">↑↓ で選択肢の順序を変えます。保存すると引き出しシートの「表示順」列に書き込まれます。</p>
+        <div id="orderList"></div>
+        <div class="drawer-tools">
+          <button id="cancelReorderBtn">キャンセル</button>
+          <button class="primary" id="saveOrderBtn">この順序で保存</button>
+        </div>
+      </div>
     </section>
 
     <!-- 登録モード 説明 -->
@@ -205,6 +241,7 @@
       items: [],            // 在庫モードの編集中データ
       missing: [],          // 前回あって今回写っていない品目 { ..., keep: bool }
       products: [],         // 登録モードの編集中データ
+      order: [],            // 並べ替えパネルで編集中の引き出しID順
     };
 
     const $ = (id) => document.getElementById(id);
@@ -235,6 +272,7 @@
       const ready = st.sheetsReady && st.apiKeySet;
       $('setupSection').classList.toggle('hidden', ready);
       $('photoSection').classList.toggle('hidden', !ready);
+      $('drawerTools').classList.toggle('hidden', !ready);
       $('drawer').disabled = !ready;
       if (ready) return true;
       $('setupNotOwner').classList.toggle('hidden', st.isOwner);
@@ -326,6 +364,93 @@
       try { localStorage.setItem('lastDrawer', $('drawer').value); } catch (e) {}
       loadPrev();
       updateRecognizeBtn();
+    });
+
+    // ---------- 引き出しの追加 ----------
+    $('addDrawerBtn').addEventListener('click', () => {
+      $('reorderPanel').classList.add('hidden');
+      const form = $('addDrawerForm');
+      form.classList.toggle('hidden');
+      if (!form.classList.contains('hidden')) $('newDrawerName').focus();
+    });
+
+    $('cancelAddDrawerBtn').addEventListener('click', () => $('addDrawerForm').classList.add('hidden'));
+
+    $('saveDrawerBtn').addEventListener('click', () => {
+      clearError();
+      const name = $('newDrawerName').value.trim();
+      if (!name) { showError('引き出しの名前を入力してください。'); $('newDrawerName').focus(); return; }
+      showOverlay('引き出しを追加中…');
+      google.script.run
+        .withSuccessHandler((res) => {
+          hideOverlay();
+          state.drawers = res.drawers;
+          renderDrawers();
+          $('drawer').value = res.id;
+          try { localStorage.setItem('lastDrawer', res.id); } catch (e) {}
+          ['newDrawerName', 'newDrawerLocation', 'newDrawerNote'].forEach(id => { $(id).value = ''; });
+          $('addDrawerForm').classList.add('hidden');
+          loadPrev();
+          updateRecognizeBtn();
+        })
+        .withFailureHandler(fail)
+        .apiAddDrawer({
+          name,
+          location: $('newDrawerLocation').value.trim(),
+          note: $('newDrawerNote').value.trim(),
+        });
+    });
+
+    // ---------- 引き出しの並べ替え ----------
+    $('reorderDrawersBtn').addEventListener('click', () => {
+      $('addDrawerForm').classList.add('hidden');
+      const panel = $('reorderPanel');
+      if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); return; }
+      if (state.drawers.length < 2) { showError('並べ替えるには引き出しが2つ以上必要です。'); return; }
+      state.order = state.drawers.map(d => d.id);
+      renderOrderList();
+      panel.classList.remove('hidden');
+    });
+
+    function renderOrderList() {
+      const byId = {};
+      state.drawers.forEach(d => { byId[d.id] = d; });
+      $('orderList').innerHTML = state.order.map((id, i) => {
+        const d = byId[id] || { name: id, location: '' };
+        return `
+        <div class="order-row">
+          <span class="muted num">${i + 1}</span>
+          <span class="grow">${esc(d.name)}${d.location ? `<span class="muted">（${esc(d.location)}）</span>` : ''}</span>
+          <div class="stepper">
+            <button data-move="-1" data-i="${i}" ${i === 0 ? 'disabled' : ''} aria-label="上へ">↑</button>
+            <button data-move="1" data-i="${i}" ${i === state.order.length - 1 ? 'disabled' : ''} aria-label="下へ">↓</button>
+          </div>
+        </div>`;
+      }).join('');
+      $('orderList').querySelectorAll('[data-move]').forEach(b => b.addEventListener('click', () => {
+        const i = Number(b.dataset.i), j = i + Number(b.dataset.move);
+        if (j < 0 || j >= state.order.length) return;
+        const tmp = state.order[i]; state.order[i] = state.order[j]; state.order[j] = tmp;
+        renderOrderList();
+      }));
+    }
+
+    $('cancelReorderBtn').addEventListener('click', () => $('reorderPanel').classList.add('hidden'));
+
+    $('saveOrderBtn').addEventListener('click', () => {
+      clearError();
+      showOverlay('表示順を保存中…');
+      google.script.run
+        .withSuccessHandler((res) => {
+          hideOverlay();
+          const current = $('drawer').value;
+          state.drawers = res.drawers;
+          renderDrawers();
+          $('drawer').value = current;
+          $('reorderPanel').classList.add('hidden');
+        })
+        .withFailureHandler(fail)
+        .apiSaveDrawerOrder(state.order.slice());
     });
 
     function loadPrev() {
