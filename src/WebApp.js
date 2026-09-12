@@ -66,11 +66,15 @@ function apiRecognize(drawerId, photos) {
 
   // 前回この引き出しにあったのに今回の認識に出てこなかった品目。
   // 画面で「なくなった（0）」か「据え置き」を選んでもらう。
+  // 前回すでに 0 だった品目（この引き出しで管理しているが今は無い物）は
+  // 選ばせずに 0 のまま引き継ぐ（zeroed）。
   const seen = {};
   result.items.forEach(function (it) { seen[it.name] = true; });
-  const missing = previous.filter(function (pv) { return pv.name && !seen[pv.name]; }).map(function (pv) {
+  const unseen = previous.filter(function (pv) { return pv.name && !seen[pv.name]; }).map(function (pv) {
     return { name: pv.name, quantity: pv.quantity, unit: pv.unit, remaining: pv.remaining, product: pv.product, note: pv.note };
   });
+  const missing = unseen.filter(function (pv) { return pv.quantity > 0; });
+  const zeroed = unseen.filter(function (pv) { return !(pv.quantity > 0); });
 
   let photoUrls = [];
   if (CONFIG.SAVE_PHOTOS) {
@@ -91,6 +95,7 @@ function apiRecognize(drawerId, photos) {
     model: result.model,
     photoUrls: photoUrls,
     missing: missing,
+    zeroed: zeroed,
   };
 }
 
