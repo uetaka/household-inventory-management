@@ -202,7 +202,7 @@
       <button id="addRowBtn">＋ 行を追加</button>
       <div id="missingBlock" class="hidden" style="margin-top:14px">
         <h2>前回あったのに今回写っていない品目</h2>
-        <p class="muted" style="margin:0 0 6px">チェックなし = なくなった（この引き出しの在庫 0）。写っていないだけなら「据え置く」にチェック。</p>
+        <p class="muted" style="margin:0 0 6px">チェックなし = なくなった（この引き出しの在庫を 0 として記録）。写っていないだけなら「据え置く」にチェック。</p>
         <div id="missing"></div>
       </div>
       <p class="muted" id="usage"></p>
@@ -243,6 +243,7 @@
       result: null,         // 認識 API の返り値
       items: [],            // 在庫モードの編集中データ
       missing: [],          // 前回あって今回写っていない品目 { ..., keep: bool }
+      zeroed: [],           // 前回すでに 0 で今回も写っていない品目。0 のまま引き継ぐ
       products: [],         // 登録モードの編集中データ
       order: [],            // 並べ替えパネルで編集中の引き出しID順
     };
@@ -335,7 +336,7 @@
     }
 
     function resetFlow() {
-      state.photos = []; state.result = null; state.items = []; state.products = []; state.missing = [];
+      state.photos = []; state.result = null; state.items = []; state.products = []; state.missing = []; state.zeroed = [];
       state.manual = false;
       renderThumbs();
       $('resultSection').classList.add('hidden');
@@ -551,6 +552,7 @@
             state.result = res;
             state.items = res.items.map(i => Object.assign({}, i));
             state.missing = (res.missing || []).map(m => Object.assign({ keep: false }, m));
+            state.zeroed = res.zeroed || [];
             renderItems();
             renderMissing();
             $('notes').textContent = res.notes || '';
@@ -603,7 +605,7 @@
               remaining: remainingKey(i.remaining), confidence: 'high',
               isNew: !masterHas(i.name), product: i.product || '', note: '', needsReview: false,
             }));
-            state.missing = [];
+            state.missing = []; state.zeroed = [];
             if (!state.items.length) state.items.push(blankItem());
             renderItems();
             renderMissing();
@@ -742,8 +744,17 @@
         name: m.name, quantity: m.quantity, unit: m.unit, remaining: m.remaining, confidence: 'medium',
         product: m.product || '', note: '写真に写っていないため前回値を据え置き', needsReview: true,
       }));
-      if (!items.length && !kept.length && !confirm('品目が0件です。この引き出しを空として記録しますか？')) return;
-      const finalItems = items.map(i => Object.assign({}, i, { needsReview: false })).concat(kept);
+      // 「なくなった」品目と前回から 0 の品目は、行を消さずに数量 0 で残す。
+      // こうすると「この引き出しで管理しているが今は 0」と「元々この引き出しにない」を
+      // 在庫シート上で区別できる。引き出しから外したいときは手入力モードで行を削除する。
+      const zeroed = state.missing.filter(m => !m.keep && !names.has(m.name))
+        .concat(state.zeroed.filter(z => !names.has(z.name)))
+        .map(z => ({
+          name: z.name, quantity: 0, unit: z.unit, remaining: 'unknown', confidence: 'high',
+          product: z.product || '', note: '写真に写っていない（この引き出しでは 0）', needsReview: false,
+        }));
+      if (!items.length && !kept.length && !zeroed.length && !confirm('品目が0件です。この引き出しを空として記録しますか？')) return;
+      const finalItems = items.map(i => Object.assign({}, i, { needsReview: false })).concat(kept, zeroed);
       showOverlay('シートに書き込み中…');
       google.script.run
         .withSuccessHandler((res) => {
