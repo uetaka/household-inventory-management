@@ -6,10 +6,10 @@ const CONFIG = {
   MODEL: 'claude-opus-5',
   // 思考の深さ。写真の数え上げは medium で十分。GAS の UrlFetch は約60秒で切れるので high 以上は非推奨。
   EFFORT: 'medium',
-  // 思考トークンも含む出力上限。
-  MAX_TOKENS: 8000,
-  // 1回の認識で送れる写真の上限。
-  MAX_PHOTOS: 4,
+  // 思考トークンも含む出力上限。写真が多いと品目も増えるので余裕を持たせる。
+  MAX_TOKENS: 16000,
+  // 1回の認識で送れる写真の上限。枚数が多いほど応答が遅くなり、GAS の約60秒制限に近づく。
+  MAX_PHOTOS: 10,
   // 写真を Google ドライブに保存して履歴からリンクするか。
   SAVE_PHOTOS: true,
   PHOTO_FOLDER_NAME: '在庫写真',
