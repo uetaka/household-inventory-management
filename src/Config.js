@@ -2,8 +2,8 @@
  * 全体設定。ここを変えるだけでモデルや枚数上限を調整できる。
  */
 const CONFIG = {
-  // 認識に使う Claude のモデル。精度重視なら claude-opus-5、コスト重視なら claude-sonnet-5。
-  MODEL: 'claude-opus-5',
+  // 認識に使う Claude のモデル。精度重視なら claude-opus-5-5、コスト重視なら claude-sonnet-5-5。
+  MODEL: 'claude-opus-5-5',
   // 思考の深さ。写真の数え上げは medium で十分。GAS の UrlFetch は約60秒で切れるので high 以上は非推奨。
   EFFORT: 'medium',
   // 思考トークンも含む出力上限。写真が多いと品目も増えるので余裕を持たせる。
