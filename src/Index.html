@@ -79,6 +79,18 @@
     details.tips li { margin-bottom: 4px; }
     details.tips li + li.head { margin-top: 8px; }
     details.tips li.head { list-style: none; margin-left: -18px; color: var(--text); font-weight: 600; }
+    .job-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 15px; }
+    .job-row:first-child { border-top: none; }
+    .job-row .grow { flex: 1; min-width: 0; }
+    .job-row .status { display: block; font-size: 12px; color: var(--muted); }
+    .job-row .status.done { color: var(--ok); font-weight: 600; }
+    .job-row .status.error { color: var(--danger); }
+    .job-row button { width: auto; margin: 0; padding: 8px 12px; font-size: 14px; white-space: nowrap; }
+    .job-row.active { background: #eff6ff; margin: 0 -14px; padding: 8px 14px; }
+    .mini-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: -2px; margin-right: 4px; }
+    .toast { position: fixed; left: 12px; right: 12px; bottom: 12px; max-width: 616px; margin: 0 auto; background: #1f2937; color: #fff; border-radius: 12px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; z-index: 9; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
+    .toast span { flex: 1; }
+    .toast button { width: auto; margin: 0; padding: 8px 12px; font-size: 14px; }
   </style>
 </head>
 <body>
@@ -112,12 +124,20 @@
       <button data-mode="register">商品を登録する</button>
     </div>
 
+    <!-- 在庫モード: Claude が数えている途中・確認待ちの引き出し -->
+    <section class="card hidden" id="jobsSection">
+      <h2>Claude に任せた引き出し</h2>
+      <div id="jobs"></div>
+      <p class="muted" style="margin:6px 0 0">待っている間に、別の引き出しを選んで撮れます。結果が出たら「確認する」から確定してください。この画面を閉じたり再読み込みしたりすると、確定前の結果は消えます。</p>
+    </section>
+
     <!-- 在庫モード STEP 1 -->
     <section class="card mode-count" id="drawerSection">
       <h2>1. 引き出しを選ぶ</h2>
       <select id="drawer">
         <option value="">読み込み中…</option>
       </select>
+      <div id="drawerJobNote" class="banner warn hidden" style="margin:8px 0 0"></div>
       <div id="prev" class="muted" style="margin-top:8px"></div>
       <div class="drawer-tools hidden" id="drawerTools">
         <button id="addDrawerBtn">＋ 引き出しを追加</button>
@@ -230,6 +250,11 @@
 
   <datalist id="masterList"></datalist>
 
+  <div class="toast hidden" id="toast">
+    <span id="toastText"></span>
+    <button id="toastBtn" class="primary">確認する</button>
+  </div>
+
   <div class="overlay hidden" id="overlay">
     <div class="spinner"></div>
     <div id="overlayText">処理中…</div>
@@ -248,7 +273,13 @@
       zeroed: [],           // 前回すでに 0 で今回も写っていない品目。0 のまま引き継ぐ
       products: [],         // 登録モードの編集中データ
       order: [],            // 並べ替えパネルで編集中の引き出しID順
+      // 在庫モードで Claude に任せた引き出し。認識を待たずに次の引き出しを撮れるようにする。
+      // { id, drawerId, drawerName, photos, status: 'running'|'done'|'error', startedAt, result, items, missing, zeroed, error }
+      jobs: [],
+      activeJob: null,      // 確認画面に出している job
+      targetDrawerId: '',   // 確定先の引き出し（job か手入力の開始時に決まる）
     };
+    let jobSeq = 0;
 
     const $ = (id) => document.getElementById(id);
 
@@ -335,11 +366,13 @@
         $('masterCount').textContent = `現在の品目マスタ: ${state.master.length} 件（定番商品あり ${state.master.filter(m => m.product).length} 件）`;
       }
       updateRecognizeBtn();
+      renderJobs();
     }
 
     function resetFlow() {
       state.photos = []; state.result = null; state.items = []; state.products = []; state.missing = []; state.zeroed = [];
       state.manual = false;
+      state.activeJob = null; state.targetDrawerId = '';
       renderThumbs();
       $('resultSection').classList.add('hidden');
       $('productSection').classList.add('hidden');
@@ -373,6 +406,7 @@
       try { localStorage.setItem('lastDrawer', $('drawer').value); } catch (e) {}
       loadPrev();
       updateRecognizeBtn();
+      updateDrawerJobNote();
     });
 
     // ---------- 引き出しの追加 ----------
@@ -401,6 +435,7 @@
           $('addDrawerForm').classList.add('hidden');
           loadPrev();
           updateRecognizeBtn();
+          updateDrawerJobNote();
         })
         .withFailureHandler(fail)
         .apiAddDrawer({
@@ -545,28 +580,21 @@
     $('recognizeBtn').addEventListener('click', () => {
       clearError();
       const payload = state.photos.map(p => ({ data: p.data, mediaType: p.mediaType }));
-      state.manual = false;
       if (state.mode === 'count') {
-        showOverlay('Claude が数えています…（20〜40秒）');
-        google.script.run
-          .withSuccessHandler((res) => {
-            hideOverlay();
-            state.result = res;
-            state.items = res.items.map(i => Object.assign({}, i));
-            state.missing = (res.missing || []).map(m => Object.assign({ keep: false }, m));
-            state.zeroed = res.zeroed || [];
-            renderItems();
-            renderMissing();
-            $('notes').textContent = res.notes || '';
-            $('notes').classList.toggle('hidden', !res.notes);
-            $('usage').textContent = usageText(res);
-            $('resultTitle').textContent = '3. 確認して確定';
-            $('resultSection').classList.remove('hidden');
-            $('resultSection').scrollIntoView({ behavior: 'smooth' });
-          })
-          .withFailureHandler(fail)
-          .apiRecognize($('drawer').value, payload);
+        // 画面を止めずに Claude に任せ、写真欄を空けて次の引き出しを撮れるようにする。
+        const drawerId = $('drawer').value;
+        if (jobForDrawer(drawerId)) { showError('この引き出しは Claude に任せている途中です。確定するか破棄してから撮り直してください。'); return; }
+        const job = { id: ++jobSeq, drawerId, drawerName: drawerName(drawerId), photos: payload, status: 'running' };
+        state.jobs.push(job);
+        runJob(job);
+        state.photos = [];
+        renderThumbs();
+        updateRecognizeBtn();
+        updateDrawerJobNote();
+        showToast(`${job.drawerName} を Claude に任せました。次の引き出しを選んで撮れます。`, null);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
+        state.manual = false;
         showOverlay('Claude が商品を読み取っています…（20〜40秒）');
         google.script.run
           .withSuccessHandler((res) => {
@@ -585,10 +613,161 @@
       }
     });
 
+    // ---------- Claude に任せた引き出し ----------
+    function runJob(job) {
+      job.status = 'running';
+      job.error = '';
+      job.startedAt = new Date();
+      renderJobs();
+      google.script.run
+        .withSuccessHandler((res) => {
+          if (!state.jobs.includes(job)) return; // 待っている間に破棄された
+          job.status = 'done';
+          job.result = res;
+          job.items = res.items.map(i => Object.assign({}, i));
+          job.missing = (res.missing || []).map(m => Object.assign({ keep: false }, m));
+          job.zeroed = res.zeroed || [];
+          job.photos = null; // 送信済みの写真はもう要らない（ドライブには保存済み）
+          renderJobs();
+          showToast(`${job.drawerName} の結果が出ました。`, job);
+          try { if (navigator.vibrate) navigator.vibrate(150); } catch (e) {}
+        })
+        .withFailureHandler((err) => {
+          if (!state.jobs.includes(job)) return;
+          job.status = 'error';
+          job.error = err && err.message ? err.message : String(err);
+          renderJobs();
+          showToast(`${job.drawerName} の認識に失敗しました。`, null);
+        })
+        .apiRecognize(job.drawerId, job.photos);
+    }
+
+    function renderJobs() {
+      const show = state.mode === 'count' && state.jobs.length > 0;
+      $('jobsSection').classList.toggle('hidden', !show);
+      updateDrawerJobNote();
+      if (!show) { $('jobs').innerHTML = ''; return; }
+      const reviewing = (j) => j === state.activeJob && !$('resultSection').classList.contains('hidden');
+      $('jobs').innerHTML = state.jobs.map((j) => {
+        let status, actions;
+        if (j.status === 'running') {
+          status = `<span class="status"><span class="mini-spinner"></span>数えています…（${esc(timeText(j.startedAt))} 開始、20〜40秒）</span>`;
+          actions = `<button data-discard="${j.id}">破棄</button>`;
+        } else if (j.status === 'done') {
+          status = reviewing(j)
+            ? '<span class="status done">下で確認中</span>'
+            : `<span class="status done">結果が出ました（${j.items.length} 品目）</span>`;
+          actions = (reviewing(j) ? '' : `<button class="primary" data-open="${j.id}">確認する</button>`) +
+            `<button data-discard="${j.id}">破棄</button>`;
+        } else {
+          status = `<span class="status error">失敗: ${esc(j.error)}</span>`;
+          actions = `<button class="primary" data-retry="${j.id}">もう一度</button><button data-discard="${j.id}">破棄</button>`;
+        }
+        return `<div class="job-row${reviewing(j) ? ' active' : ''}"><span class="grow">${esc(j.drawerName)}${status}</span>${actions}</div>`;
+      }).join('');
+      const byId = (id) => state.jobs.find(j => j.id === Number(id));
+      $('jobs').querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => openJob(byId(b.dataset.open))));
+      $('jobs').querySelectorAll('[data-retry]').forEach(b => b.addEventListener('click', () => runJob(byId(b.dataset.retry))));
+      $('jobs').querySelectorAll('[data-discard]').forEach(b => b.addEventListener('click', () => discardJob(byId(b.dataset.discard))));
+    }
+
+    /** 結果が出た job を確認画面に出す。編集内容は job に直接たまるので、別の job に切り替えても消えない。 */
+    function openJob(job) {
+      if (!job || job.status !== 'done') return;
+      clearError();
+      hideToast();
+      state.manual = false;
+      state.activeJob = job;
+      state.targetDrawerId = job.drawerId;
+      state.result = job.result;
+      state.items = job.items;
+      state.missing = job.missing;
+      state.zeroed = job.zeroed;
+      renderItems();
+      renderMissing();
+      $('notes').textContent = job.result.notes || '';
+      $('notes').classList.toggle('hidden', !job.result.notes);
+      $('usage').textContent = usageText(job.result);
+      $('resultTitle').textContent = `3. 確認して確定（${job.drawerName}）`;
+      $('doneSection').classList.add('hidden');
+      $('photoSection').classList.remove('hidden');
+      $('resultSection').classList.remove('hidden');
+      renderJobs();
+      $('resultSection').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function discardJob(job) {
+      if (!job) return;
+      const msg = job.status === 'running'
+        ? `${job.drawerName} の認識を破棄しますか？（Claude の処理は止まらないため、料金はかかります）`
+        : `${job.drawerName} の結果を破棄しますか？在庫は更新されません。`;
+      if (!confirm(msg)) return;
+      removeJob(job);
+    }
+
+    function removeJob(job) {
+      state.jobs = state.jobs.filter(j => j !== job);
+      if (state.activeJob === job) {
+        state.activeJob = null;
+        state.result = null; state.items = []; state.missing = []; state.zeroed = [];
+        $('resultSection').classList.add('hidden');
+      }
+      renderJobs();
+      updateRecognizeBtn();
+    }
+
+    function jobForDrawer(drawerId) {
+      return state.jobs.find(j => j.drawerId === drawerId);
+    }
+
+    /** 選んだ引き出しが Claude に任せている途中なら、撮り直しや手入力で上書きしないよう知らせる。 */
+    function updateDrawerJobNote() {
+      const job = state.mode === 'count' ? jobForDrawer($('drawer').value) : null;
+      $('drawerJobNote').classList.toggle('hidden', !job);
+      if (!job) return;
+      $('drawerJobNote').textContent = job.status === 'running'
+        ? 'この引き出しは Claude が数えている途中です。次に撮るなら別の引き出しを選んでください。'
+        : job.status === 'done'
+          ? 'この引き出しは結果の確認待ちです。上の「確認する」から確定してください。'
+          : 'この引き出しは認識に失敗しています。上の「もう一度」か「破棄」を選んでください。';
+    }
+
+    function drawerName(id) {
+      const d = state.drawers.find(d => d.id === id);
+      return d ? d.name : id;
+    }
+
+    function timeText(d) {
+      return d ? d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
+    }
+
+    let toastTimer = null;
+    function showToast(text, job) {
+      $('toastText').textContent = text;
+      $('toastBtn').classList.toggle('hidden', !job);
+      $('toastBtn').onclick = job ? () => openJob(job) : null;
+      $('toast').classList.remove('hidden');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(hideToast, job ? 8000 : 4000);
+    }
+    function hideToast() { $('toast').classList.add('hidden'); }
+
+    // 確定前の結果は画面の中にしかないので、閉じる前に確認する。
+    window.addEventListener('beforeunload', (e) => {
+      if (!state.jobs.length) return;
+      e.preventDefault();
+      e.returnValue = '';
+    });
+
     // ---------- 写真なしで手入力 ----------
     $('manualBtn').addEventListener('click', () => {
       clearError();
+      if (state.mode === 'count' && jobForDrawer($('drawer').value)) {
+        showError('この引き出しは Claude に任せている途中です。確定するか破棄してから手入力してください。');
+        return;
+      }
       state.manual = true;
+      state.activeJob = null;
       state.result = null;
       state.photos = [];
       renderThumbs();
@@ -596,6 +775,8 @@
       if (state.mode === 'count') {
         const drawerId = $('drawer').value;
         if (!drawerId) { showError('先に引き出しを選んでください。'); return; }
+        state.targetDrawerId = drawerId;
+        renderJobs();
         showOverlay('前回の在庫を読み込み中…');
         google.script.run
           .withSuccessHandler((res) => {
@@ -757,19 +938,27 @@
         }));
       if (!items.length && !kept.length && !zeroed.length && !confirm('品目が0件です。この引き出しを空として記録しますか？')) return;
       const finalItems = items.map(i => Object.assign({}, i, { needsReview: false })).concat(kept, zeroed);
+      const job = state.activeJob;
+      const drawerId = state.targetDrawerId;
+      if (!drawerId) { showError('確定先の引き出しが分かりません。もう一度やり直してください。'); return; }
       showOverlay('シートに書き込み中…');
       google.script.run
         .withSuccessHandler((res) => {
           hideOverlay();
-          $('doneMsg').textContent = `${res.count} 品目を記録しました。` +
-            (res.newItems.length ? ` 品目マスタに追加: ${res.newItems.join('、')}` : '');
+          if (job) removeJob(job);
+          const waiting = state.jobs.filter(j => j.status === 'done').length;
+          const running = state.jobs.filter(j => j.status === 'running').length;
+          $('doneMsg').textContent = `${drawerName(drawerId)}: ${res.count} 品目を記録しました。` +
+            (res.newItems.length ? ` 品目マスタに追加: ${res.newItems.join('、')}` : '') +
+            (waiting ? ` ほかに確認待ちが ${waiting} 件あります。` : '') +
+            (running ? ` Claude が数えている途中が ${running} 件あります。` : '');
           $('shortage').innerHTML = res.shortage.length
             ? `<div class="banner warn">買い足しが必要: ` + res.shortage.map(s => `${esc(s.name)}${s.product ? ' → ' + esc(s.product) : ''}（あと${s.shortage}）`).join('、') + '</div>'
             : '<p class="muted">最低在庫を下回っている品目はありません。</p>';
           showDone();
         })
         .withFailureHandler(fail)
-        .apiCommit($('drawer').value, finalItems, {
+        .apiCommit(drawerId, finalItems, {
           recognized: state.result ? state.result.items : null,
           photoUrls: state.result ? state.result.photoUrls : [],
           usage: state.result ? state.result.usage : null,
@@ -866,7 +1055,12 @@
     }
 
     $('againBtn').addEventListener('click', () => {
+      // 在庫モードでは、確認している間に撮り始めていた次の引き出しの写真を残す
+      const keep = state.mode === 'count' ? state.photos : [];
       resetFlow();
+      state.photos = keep;
+      renderThumbs();
+      renderJobs();
       if (state.mode === 'count') loadPrev();
       else $('masterCount').textContent = `現在の品目マスタ: ${state.master.length} 件（定番商品あり ${state.master.filter(m => m.product).length} 件）`;
       updateRecognizeBtn();
