@@ -375,6 +375,15 @@ function truncateForCell_(s) {
 
 // ---------- 買い物リスト ----------
 
+/**
+ * 数量の列（在庫合計・最低在庫・不足数）を数値に、更新日時の列を日時にする。
+ * 以前の版は不足数の列に日時の書式を付けていたので、書き出すたびに付け直して既存シートも直す。
+ */
+function formatShoppingSheet_(sheet) {
+  sheet.getRange('D:F').setNumberFormat('General');
+  sheet.getRange('H:H').setNumberFormat('yyyy/mm/dd hh:mm');
+}
+
 /** 最低在庫を下回る品目を「買い物リスト」シートに書き出す。 */
 function refreshShoppingList() {
   const master = getItemMaster();
@@ -402,5 +411,6 @@ function refreshShoppingList() {
   if (rows.length) {
     sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
   }
+  formatShoppingSheet_(sheet);
   return rows.map(function (r) { return { name: r[0], product: r[1], store: r[2], have: r[3], min: r[4], shortage: r[5] }; });
 }

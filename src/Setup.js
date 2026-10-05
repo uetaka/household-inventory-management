@@ -39,7 +39,7 @@ function setupSpreadsheet() {
   history.setColumnWidth(6, 300);
 
   const shopping = ensureSheet_(ss, S.SHOPPING, H.SHOPPING);
-  shopping.getRange('F:F').setNumberFormat('yyyy/mm/dd hh:mm');
+  formatShoppingSheet_(shopping);
 
   // 空の「シート1」が残っていれば消す。
   const defaultSheet = ss.getSheetByName('シート1') || ss.getSheetByName('Sheet1');
