@@ -25,7 +25,7 @@
     .muted { color: var(--muted); font-size: 13px; }
     .hidden { display: none !important; }
     .tabs { display: flex; background: var(--line); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
-    .tabs button { margin: 0; padding: 9px; border: none; background: transparent; border-radius: 8px; font-size: 14px; color: var(--muted); }
+    .tabs button { margin: 0; padding: 9px 4px; border: none; background: transparent; border-radius: 8px; font-size: 13px; color: var(--muted); white-space: nowrap; }
     .tabs button.active { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
     .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .thumb { position: relative; width: 96px; height: 96px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
@@ -91,6 +91,19 @@
     .toast { position: fixed; left: 12px; right: 12px; bottom: 12px; max-width: 616px; margin: 0 auto; background: #1f2937; color: #fff; border-radius: 12px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; z-index: 9; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
     .toast span { flex: 1; }
     .toast button { width: auto; margin: 0; padding: 8px 12px; font-size: 14px; }
+    textarea { width: 100%; font-size: 15px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text); font-family: inherit; }
+    textarea[readonly] { font-size: 13px; color: var(--muted); background: var(--bg); }
+    .shop-group { font-size: 13px; color: var(--muted); font-weight: 600; margin: 12px 0 2px; }
+    .shop-group:first-child { margin-top: 0; }
+    .shop-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 15px; }
+    .shop-group + .shop-row { border-top: none; }
+    .shop-row .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .shop-row .sub { display: block; font-size: 12px; color: var(--muted); }
+    .shop-row button { width: auto; margin: 0; padding: 8px 12px; font-size: 14px; white-space: nowrap; }
+    .shop-row a { color: var(--accent); }
+    .preview-row { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
+    .preview-row:first-child { border-top: none; }
+    .preview-row .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
@@ -108,7 +121,7 @@
       <div id="setupNotOwner" class="banner warn hidden">セットアップが終わっていません。アプリをデプロイした本人がこの画面を開いて設定してください。</div>
       <div id="setupOwner" class="hidden">
         <div id="setupSheets">
-          <p class="muted">① 台帳のシート（引き出し・品目マスタ・在庫・履歴・買い物リスト）を作ります。</p>
+          <p class="muted">① 台帳のシート（引き出し・品目マスタ・在庫・履歴・買い物リスト・買いたい物）を作ります。</p>
           <button id="setupSheetsBtn">シートを作成する</button>
         </div>
         <div id="setupKey" style="margin-top:12px">
@@ -122,6 +135,7 @@
     <div class="tabs hidden" id="tabs">
       <button data-mode="count" class="active">在庫を数える</button>
       <button data-mode="register">商品を登録する</button>
+      <button data-mode="shop" id="shopTab">買い物リスト</button>
     </div>
 
     <!-- 在庫モード: Claude が数えている途中・確認待ちの引き出し -->
@@ -241,6 +255,51 @@
       <button class="primary" id="saveProductsBtn">品目マスタに登録</button>
     </section>
 
+    <!-- 買い物リストモード -->
+    <section class="card mode-shop hidden" id="shopSection">
+      <h2>買い物リスト</h2>
+      <div id="shopList"><p class="muted">読み込み中…</p></div>
+      <p class="muted" id="shopUpdated" style="margin:8px 0 0"></p>
+      <button id="shopReloadBtn">最新にする</button>
+    </section>
+
+    <section class="card mode-shop hidden" id="wishAddSection">
+      <h2>買いたい物を追加</h2>
+      <p class="muted" style="margin:0 0 8px">マスキングテープなど、在庫として数えない物を書いておくと、買い物リストに「単発」として並びます。買ったら「買った」を押してください。</p>
+      <label>品名</label>
+      <input type="text" id="wishName" list="masterList" placeholder="例: マスキングテープ" autocomplete="off">
+      <label style="margin-top:8px">メモ（任意）</label>
+      <input type="text" id="wishMemo" placeholder="例: 15mm幅、白" autocomplete="off">
+      <label style="margin-top:8px">購入先（任意）</label>
+      <input type="text" id="wishStore" placeholder="店名か URL" autocomplete="off">
+      <button class="primary" id="wishAddBtn">追加する</button>
+      <details class="tips" id="wishPasteBlock">
+        <summary>まとめて貼り付ける（AI と相談した結果など）</summary>
+        <p style="margin:8px 0">1行1品で「品名 / メモ / 購入先」。メモと購入先は省略できます。区切りは「 / 」のほか、タブ・「｜」・全角の「／」でも構いません。</p>
+        <textarea id="wishPaste" rows="6" placeholder="マスキングテープ / 15mm幅、白 / ダイソー&#10;単4電池 / 8本パック&#10;フック"></textarea>
+        <button id="wishParseBtn">読み取る</button>
+        <div id="wishPreview" style="margin-top:8px"></div>
+        <button class="primary hidden" id="wishPasteSaveBtn">追加する</button>
+      </details>
+    </section>
+
+    <section class="card mode-shop hidden" id="aiSection">
+      <h2>AI と相談して追加する</h2>
+      <p class="muted" style="margin:0 0 6px">Google ドライブ（スプレッドシート）と連携した AI（Claude、ChatGPT、Gemini など）なら、相談して決めた物をそのまま「買いたい物」シートに書き込んでもらえます。下の指示文をコピーして、相談の最後に AI に貼ってください。書き込まれた物は、アプリを開いたとき・「最新にする」を押したとき・1時間ごとに買い物リストへ反映されます。</p>
+      <button class="primary" id="copySheetInstrBtn">シートに書き込んでもらう指示文をコピー</button>
+      <p class="muted" style="margin:10px 0 6px">連携していない AI なら、貼り付け用の形式で出してもらい、上の「まとめて貼り付ける」に貼ります。</p>
+      <button id="copyPasteInstrBtn">貼り付け用に出力してもらう指示文をコピー</button>
+      <details class="tips">
+        <summary>指示文の中身と注意</summary>
+        <p style="margin:8px 0 4px">シートに書き込んでもらう指示文</p>
+        <textarea id="sheetInstr" rows="8" readonly></textarea>
+        <p style="margin:8px 0 4px">貼り付け用の指示文</p>
+        <textarea id="pasteInstr" rows="5" readonly></textarea>
+        <p style="margin:8px 0 4px">Google ドライブとの連携を有効にした AI は、このシートに限らずドライブ全体を読み書きできます。気になる場合は貼り付け用の指示文を使ってください。</p>
+      </details>
+      <p style="margin:10px 0 0"><a id="wishSheetLink" target="_blank" rel="noopener" class="hidden">「買いたい物」シートを開く</a></p>
+    </section>
+
     <section class="card hidden" id="doneSection">
       <div class="banner ok" id="doneMsg"></div>
       <div id="shortage"></div>
@@ -263,7 +322,7 @@
   <script>
     const CATEGORIES = ['洗面', 'バス', 'トイレ', 'キッチン', '洗濯', '日用品', '電池', 'その他'];
     const state = {
-      mode: 'count',        // 'count' | 'register'
+      mode: 'count',        // 'count' | 'register' | 'shop'
       manual: false,        // 写真なしの手入力フローか
       drawers: [], master: [], config: {},
       photos: [],           // { data, mediaType, preview }
@@ -278,6 +337,8 @@
       jobs: [],
       activeJob: null,      // 確認画面に出している job
       targetDrawerId: '',   // 確定先の引き出し（job か手入力の開始時に決まる）
+      shop: null,           // 買い物リスト { shortage, wishes, updatedAt, sheetUrl, instructions }
+      wishDraft: [],        // まとめて貼り付けで読み取った追加候補 { name, memo, store }
     };
     let jobSeq = 0;
 
@@ -299,6 +360,8 @@
           renderMasterList();
           restoreDrawer();
           setMode(state.mode);
+          // AI がシートに書き込んだ物も反映させるため、開くたびに買い物リストを作り直す（画面は待たせない）。
+          loadShopping();
         })
         .withFailureHandler(fail)
         .apiGetInitialData();
@@ -352,7 +415,15 @@
       document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
       document.querySelectorAll('.mode-count').forEach(el => el.classList.toggle('hidden', mode !== 'count'));
       document.querySelectorAll('.mode-register').forEach(el => el.classList.toggle('hidden', mode !== 'register'));
+      document.querySelectorAll('.mode-shop').forEach(el => el.classList.toggle('hidden', mode !== 'shop'));
       resetFlow();
+      $('photoSection').classList.toggle('hidden', mode === 'shop');
+      if (mode === 'shop') {
+        renderShopping();
+        loadShopping();
+        renderJobs();
+        return;
+      }
       if (mode === 'count') {
         $('photoTitle').textContent = '2. 中身を撮る';
         $('photoHint').innerHTML = `真上から、物を重ねずに。ボタンを押すたびに1枚ずつ追加され、${state.config.maxPhotos}枚までまとめて認識します。`;
@@ -674,6 +745,7 @@
     /** 結果が出た job を確認画面に出す。編集内容は job に直接たまるので、別の job に切り替えても消えない。 */
     function openJob(job) {
       if (!job || job.status !== 'done') return;
+      if (state.mode !== 'count') setMode('count');
       clearError();
       hideToast();
       state.manual = false;
@@ -956,6 +1028,7 @@
             ? `<div class="banner warn">買い足しが必要: ` + res.shortage.map(s => `${esc(s.name)}${s.product ? ' → ' + esc(s.product) : ''}（あと${s.shortage}）`).join('、') + '</div>'
             : '<p class="muted">最低在庫を下回っている品目はありません。</p>';
           showDone();
+          loadShopping();
         })
         .withFailureHandler(fail)
         .apiCommit(drawerId, finalItems, {
@@ -1043,6 +1116,172 @@
         .withFailureHandler(fail)
         .apiSaveProducts(products);
     });
+
+    // ---------- 買い物リスト ----------
+    let shopLoading = 0;
+    /** 買い物リストを作り直して取ってくる。画面は止めない。 */
+    function loadShopping() {
+      const seq = ++shopLoading;
+      $('shopUpdated').textContent = '更新中…';
+      google.script.run
+        .withSuccessHandler((res) => { if (seq === shopLoading) applyShopping(res); })
+        .withFailureHandler((err) => {
+          if (seq !== shopLoading) return;
+          $('shopUpdated').textContent = '';
+          if (state.mode === 'shop') fail(err);
+        })
+        .apiGetShopping();
+    }
+
+    function applyShopping(res) {
+      state.shop = res;
+      renderShopping();
+    }
+
+    function renderShopping() {
+      const shop = state.shop;
+      const count = shop ? shop.shortage.length + shop.wishes.length : 0;
+      $('shopTab').textContent = count ? `買い物リスト（${count}）` : '買い物リスト';
+      if (!shop) return;
+      const storeHtml = (s) => !s ? '' : /^https?:\/\//.test(s)
+        ? `<a href="${esc(s)}" target="_blank" rel="noopener">購入先を開く</a>` : esc(s);
+      const sub = (parts) => {
+        const p = parts.filter(Boolean);
+        return p.length ? `<span class="sub">${p.join(' ・ ')}</span>` : '';
+      };
+      let html = '';
+      if (shop.shortage.length) {
+        html += '<div class="shop-group">在庫不足（在庫を数え直して最低在庫以上になると消えます）</div>' +
+          shop.shortage.map(s => `
+          <div class="shop-row">
+            <span class="grow">${esc(s.name)} <span class="muted">あと ${s.shortage}</span>
+              ${sub([s.product ? '定番: ' + esc(s.product) : '', storeHtml(s.store), s.places ? '置き場所: ' + esc(s.places) : '', s.memo ? esc(s.memo) : ''])}
+            </span>
+            ${s.wishKey ? `<button data-buy="${esc(s.wishKey)}">買った</button>` : ''}
+          </div>`).join('');
+      }
+      if (shop.wishes.length) {
+        html += '<div class="shop-group">単発（「買った」を押すと消えます）</div>' +
+          shop.wishes.map(w => `
+          <div class="shop-row">
+            <span class="grow">${esc(w.name)}
+              ${sub([w.memo ? esc(w.memo) : '', w.product ? '定番: ' + esc(w.product) : '', storeHtml(w.store), w.addedBy ? '追加: ' + esc(w.addedBy) : ''])}
+            </span>
+            <button data-buy="${esc(w.key)}">買った</button>
+          </div>`).join('');
+      }
+      $('shopList').innerHTML = html || '<p class="muted">買う物はありません。</p>';
+      $('shopList').querySelectorAll('[data-buy]').forEach(b => b.addEventListener('click', () => markBought(b.dataset.buy, b)));
+      $('shopUpdated').textContent = `${new Date(shop.updatedAt).toLocaleString('ja-JP')} 時点`;
+      $('sheetInstr').value = shop.instructions.sheet;
+      $('pasteInstr').value = shop.instructions.paste;
+      $('wishSheetLink').href = shop.sheetUrl;
+      $('wishSheetLink').classList.remove('hidden');
+    }
+
+    function markBought(key, btn) {
+      clearError();
+      btn.disabled = true;
+      showOverlay('購入済みにしています…');
+      google.script.run
+        .withSuccessHandler((res) => { hideOverlay(); applyShopping(res); })
+        .withFailureHandler((err) => { btn.disabled = false; fail(err); })
+        .apiMarkWishesPurchased([key]);
+    }
+
+    $('shopReloadBtn').addEventListener('click', () => { clearError(); loadShopping(); });
+
+    function saveWishes(items, done) {
+      clearError();
+      showOverlay('買いたい物に追加しています…');
+      google.script.run
+        .withSuccessHandler((res) => {
+          hideOverlay();
+          applyShopping(res);
+          done();
+          showToast(`${res.added} 件を買い物リストに追加しました。`, null);
+        })
+        .withFailureHandler(fail)
+        .apiAddWishes(items);
+    }
+
+    $('wishAddBtn').addEventListener('click', () => {
+      const name = $('wishName').value.trim();
+      if (!name) { showError('品名を入力してください。'); $('wishName').focus(); return; }
+      saveWishes([{ name, memo: $('wishMemo').value.trim(), store: $('wishStore').value.trim() }], () => {
+        ['wishName', 'wishMemo', 'wishStore'].forEach(id => { $(id).value = ''; });
+      });
+    });
+
+    /**
+     * 貼り付けた文章を1行1品として読む。「品名 / メモ / 購入先」の区切りは「 / 」（前後に空白）、
+     * タブ、「|」「｜」、全角「／」。URL の「/」で切れないよう、半角スラッシュは前後に空白があるときだけ区切りにする。
+     * 箇条書きの記号、Markdown の表の罫線、見出し行、コードブロックの ``` は読み飛ばす。
+     */
+    function parseWishText(text) {
+      const out = [];
+      text.split(/\r?\n/).forEach(line => {
+        let s = line.trim();
+        if (!s || /^```/.test(s) || /^[|｜\s:：\-—]+$/.test(s)) return;
+        s = s.replace(/^([-*・•●□■]|\[[ xX]?\]|\d+[.)．、])\s*/, '').replace(/^[|｜]|[|｜]$/g, '').trim();
+        const parts = s.split(/\s+\/\s+|\s*[／|｜\t]\s*/).map(p => p.trim());
+        const name = parts[0];
+        if (!name || name === '品名' || name === '品目名') return;
+        out.push({ name, memo: parts[1] || '', store: parts.slice(2).filter(Boolean).join(' ') });
+      });
+      return out;
+    }
+
+    function renderWishDraft() {
+      $('wishPreview').innerHTML = state.wishDraft.map((w, i) => `
+        <div class="preview-row">
+          <span class="grow">${esc(w.name)}${w.memo ? ` <span class="muted">${esc(w.memo)}</span>` : ''}${w.store ? ` <span class="muted">（${esc(w.store)}）</span>` : ''}</span>
+          <button class="del" data-del="${i}" aria-label="削除">🗑</button>
+        </div>`).join('');
+      $('wishPreview').querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => {
+        state.wishDraft.splice(Number(b.dataset.del), 1);
+        renderWishDraft();
+      }));
+      $('wishPasteSaveBtn').textContent = `この ${state.wishDraft.length} 件を追加する`;
+      $('wishPasteSaveBtn').classList.toggle('hidden', !state.wishDraft.length);
+    }
+
+    $('wishParseBtn').addEventListener('click', () => {
+      clearError();
+      state.wishDraft = parseWishText($('wishPaste').value);
+      if (!state.wishDraft.length) showError('読み取れる行がありませんでした。1行1品で「品名 / メモ / 購入先」の形にしてください。');
+      renderWishDraft();
+    });
+
+    $('wishPasteSaveBtn').addEventListener('click', () => {
+      if (!state.wishDraft.length) return;
+      saveWishes(state.wishDraft.slice(), () => {
+        state.wishDraft = [];
+        $('wishPaste').value = '';
+        renderWishDraft();
+      });
+    });
+
+    $('copySheetInstrBtn').addEventListener('click', () => copyInstruction('sheetInstr'));
+    $('copyPasteInstrBtn').addEventListener('click', () => copyInstruction('pasteInstr'));
+
+    /** 指示文をクリップボードへ。Apps Script の画面は iframe の中なので、使えなければ選択状態にして手でコピーしてもらう。 */
+    async function copyInstruction(id) {
+      clearError();
+      const el = $(id);
+      if (!el.value) { showError('指示文を読み込み中です。少し待ってからもう一度押してください。'); return; }
+      try {
+        await navigator.clipboard.writeText(el.value);
+        showToast('指示文をコピーしました。AI に貼り付けてください。', null);
+        return;
+      } catch (e) { /* 下の方法を試す */ }
+      el.closest('details').open = true;
+      el.focus();
+      el.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      showToast(ok ? '指示文をコピーしました。AI に貼り付けてください。' : '自動でコピーできませんでした。選択した指示文を長押ししてコピーしてください。', null);
+    }
 
     // ---------- 完了 ----------
     function showDone() {

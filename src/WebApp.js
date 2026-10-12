@@ -143,13 +143,13 @@ function apiCommit(drawerId, items, meta) {
     model: meta.manual ? '手入力' : (meta.model || CONFIG.MODEL),
   });
 
-  const shortage = refreshShoppingList();
+  const list = refreshShoppingList();
 
   return {
     ok: true,
     count: cleaned.length,
     newItems: newNames,
-    shortage: shortage,
+    shortage: list.shortage,
     updatedAt: now.toISOString(),
   };
 }
@@ -189,6 +189,52 @@ function apiSaveProducts(products) {
   return { ok: true, added: result.added, updated: result.updated };
 }
 
+// ---------- 買い物リスト・買いたい物 ----------
+
+/**
+ * 買い物リストを作り直して返す。AI が「買いたい物」シートに直接書いた行もここで反映される。
+ * 以前の版から更新した台帳では自動更新のトリガーがまだ無いので、ついでに作っておく。
+ */
+function apiGetShopping() {
+  try {
+    installShoppingTrigger_();
+  } catch (e) {
+    Logger.log('買い物リストの自動更新を設定できませんでした: ' + e.message);
+  }
+  return shoppingPayload_();
+}
+
+/**
+ * 買いたい物を追加する。
+ * @param {Array<{name: string, memo: string, store: string}>} items
+ */
+function apiAddWishes(items) {
+  let user = '';
+  try { user = Session.getActiveUser().getEmail(); } catch (e) { /* 取得できない設定もある */ }
+  const added = addWishes(items, user || 'アプリ');
+  if (!added) throw new Error('品名を入力してください。');
+  return Object.assign({ added: added }, shoppingPayload_());
+}
+
+/** 指定した品名（同じ品名の行すべて）を購入済みにする。 */
+function apiMarkWishesPurchased(keys) {
+  const count = markWishesPurchased(keys);
+  return Object.assign({ marked: count }, shoppingPayload_());
+}
+
+function shoppingPayload_() {
+  const list = refreshShoppingList();
+  const ss = getSpreadsheet_();
+  const wishSheet = getWishSheet_();
+  return {
+    shortage: list.shortage,
+    wishes: list.wishes,
+    updatedAt: new Date().toISOString(),
+    sheetUrl: ss.getUrl() + '#gid=' + wishSheet.getSheetId(),
+    instructions: wishInstructions_(),
+  };
+}
+
 // ---------- 写真の保存 ----------
 
 function getPhotoFolder_() {
@@ -214,8 +260,9 @@ function savePhotos_(drawer, photos) {
 
 function getSetupStatus_() {
   const ss = getSpreadsheet_();
+  // 「買いたい物」は後から足したシートで、無ければ使うときに自動で作るので、セットアップの条件にはしない。
   const sheetsReady = Object.keys(CONFIG.SHEETS).every(function (k) {
-    return !!ss.getSheetByName(CONFIG.SHEETS[k]);
+    return k === 'WISHLIST' || !!ss.getSheetByName(CONFIG.SHEETS[k]);
   });
   const apiKeySet = !!PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   return { sheetsReady: sheetsReady, apiKeySet: apiKeySet, isOwner: isOwner_() };

@@ -373,6 +373,209 @@ function truncateForCell_(s) {
   return s.length > 49000 ? s.slice(0, 49000) + '…(省略)' : s;
 }
 
+// ---------- 買いたい物（単発） ----------
+
+// 「買いたい物」シートの列位置（0始まり）。CONFIG.HEADERS.WISHLIST の順番と揃える。
+const WISH_COL = { NAME: 0, MEMO: 1, STORE: 2, ADDED_AT: 3, ADDED_BY: 4, DONE: 5, DONE_AT: 6 };
+
+/**
+ * 「買いたい物」シート。以前の版で作った台帳には無いので、無ければその場で作る。
+ * 人も AI（Google ドライブ連携）も直接書き込むので、品名以外は空欄でもよい作りにする。
+ */
+function getWishSheet_() {
+  const ss = getSpreadsheet_();
+  const sheet = ss.getSheetByName(CONFIG.SHEETS.WISHLIST);
+  return sheet || formatWishSheet_(ensureSheet_(ss, CONFIG.SHEETS.WISHLIST, CONFIG.HEADERS.WISHLIST));
+}
+
+/** 日付の書式、購入済み欄のチェックボックス、AI 向けの説明（品名セルのメモ）を付ける。 */
+function formatWishSheet_(sheet) {
+  sheet.getRange('D:D').setNumberFormat('yyyy/mm/dd hh:mm');
+  sheet.getRange('G:G').setNumberFormat('yyyy/mm/dd hh:mm');
+  sheet.setColumnWidth(1, 200);
+  sheet.setColumnWidth(2, 240);
+  sheet.setColumnWidth(3, 200);
+  // insertCheckboxes() は既存の値を FALSE で上書きするので、入力規則だけ付けて値は残す。
+  // 空のセルに規則を付けても最終行は伸びないので、AI の「最終行の下に追記」もずれない。
+  if (sheet.getMaxRows() > 1) {
+    sheet.getRange(2, WISH_COL.DONE + 1, sheet.getMaxRows() - 1, 1)
+      .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  }
+  sheet.getRange(1, 1).setNote(wishInstructions_().sheet);
+  return sheet;
+}
+
+/** 購入済み欄の値を真偽に。チェックのほか「済」「✓」や日付も購入済みとみなし、空・FALSE・その他は未購入。 */
+function isPurchased_(v) {
+  if (v === true) return true;
+  if (v instanceof Date) return true;
+  if (typeof v === 'number') return v === 1;
+  return CONFIG.PURCHASED_MARKS.indexOf(toStr_(v).toUpperCase()) !== -1;
+}
+
+/** 同じ物かどうかの判定用。全角半角・大文字小文字・空白の違いは同じ物とみなす。 */
+function wishKey_(name) {
+  return toStr_(name).normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+}
+
+/**
+ * AI や人が書き込んだ行を整える。
+ * 追加日が空なら今の日時を入れ、購入済み欄を TRUE/FALSE に揃える（日付が書かれていれば購入日に移す）。
+ * 値が変わる列だけ書き戻すので、品名・メモ・購入先には触らない。
+ */
+function normalizeWishSheet_(sheet, now) {
+  const width = CONFIG.HEADERS.WISHLIST.length;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  const values = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  const added = values.map(function (r) { return [r[WISH_COL.ADDED_AT]]; });
+  const done = values.map(function (r) { return [r[WISH_COL.DONE], r[WISH_COL.DONE_AT]]; });
+  let addedChanged = false, doneChanged = false;
+  values.forEach(function (r, i) {
+    if (!toStr_(r[WISH_COL.NAME])) return;
+    if (r[WISH_COL.ADDED_AT] === '' || r[WISH_COL.ADDED_AT] === null) {
+      added[i][0] = now;
+      addedChanged = true;
+    }
+    const mark = r[WISH_COL.DONE];
+    const purchased = isPurchased_(mark);
+    if (mark !== purchased) {
+      done[i][0] = purchased;
+      if (mark instanceof Date && toStr_(r[WISH_COL.DONE_AT]) === '') done[i][1] = mark;
+      doneChanged = true;
+    }
+  });
+  if (addedChanged) sheet.getRange(2, WISH_COL.ADDED_AT + 1, values.length, 1).setValues(added);
+  if (doneChanged) sheet.getRange(2, WISH_COL.DONE + 1, values.length, 2).setValues(done);
+  // シートの行数を超えて追記された行にもチェックボックスを付ける。
+  sheet.getRange(2, WISH_COL.DONE + 1, lastRow - 1, 1)
+    .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+}
+
+/**
+ * まだ買っていない物を、同じ品名ごとに1件へまとめて返す。
+ * 品目マスタの品目名か別名に一致すれば、定番商品と購入先（空欄のとき）をマスタから補う。
+ */
+function getOpenWishes_(master) {
+  const byKey = {};
+  master.forEach(function (m) {
+    [m.name].concat(m.aliases).forEach(function (n) {
+      const k = wishKey_(n);
+      if (k && !byKey[k]) byKey[k] = m;
+    });
+  });
+  const groups = [];
+  const index = {};
+  readTable_(getWishSheet_()).forEach(function (r) {
+    const name = toStr_(r['品名']);
+    if (!name || isPurchased_(r['購入済み'])) return;
+    const key = wishKey_(name);
+    let g = index[key];
+    if (!g) {
+      const m = byKey[key];
+      g = index[key] = {
+        key: key, name: name, memos: [], store: '', product: m ? m.product : '', masterName: m ? m.name : '',
+        masterStore: m ? m.store : '', addedBy: [], addedAt: null,
+      };
+      groups.push(g);
+    }
+    const memo = toStr_(r['メモ']);
+    if (memo && g.memos.indexOf(memo) === -1) g.memos.push(memo);
+    if (!g.store) g.store = toStr_(r['購入先']);
+    const by = toStr_(r['追加者']);
+    if (by && g.addedBy.indexOf(by) === -1) g.addedBy.push(by);
+    const at = r['追加日'];
+    if (at instanceof Date && (!g.addedAt || at < g.addedAt)) g.addedAt = at;
+  });
+  return groups.map(function (g) {
+    return {
+      key: g.key, name: g.name, memo: g.memos.join(' / '), store: g.store || g.masterStore, product: g.product,
+      masterName: g.masterName, addedBy: g.addedBy.join('、'), addedAt: g.addedAt,
+    };
+  });
+}
+
+/**
+ * 買いたい物を追加する。同じ品名がまだ買っていない状態で残っていても行は足す
+ * （買い物リストでは1件にまとまり、「買った」で全部まとめて購入済みになる）。
+ * @param {Array<{name: string, memo: string, store: string}>} items
+ * @param {string} addedBy 追加者として記録する名前
+ * @return {number} 追加した件数
+ */
+function addWishes(items, addedBy) {
+  const now = new Date();
+  const rows = (items || []).map(function (it) {
+    return [toStr_(it && it.name), toStr_(it && it.memo), toStr_(it && it.store), now, toStr_(addedBy), false, ''];
+  }).filter(function (r) { return r[0]; });
+  if (!rows.length) return 0;
+  const sheet = getWishSheet_();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const start = sheet.getLastRow() + 1;
+    sheet.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+    sheet.getRange(start, WISH_COL.DONE + 1, rows.length, 1)
+      .setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  } finally {
+    lock.releaseLock();
+  }
+  return rows.length;
+}
+
+/**
+ * 指定した品名（wishKey_ で比べる）のまだ買っていない行を、すべて購入済みにする。
+ * 行番号ではなく品名で探すので、その間に AI が行を足していてもずれない。
+ * @return {number} 購入済みにした行数
+ */
+function markWishesPurchased(keys) {
+  const want = {};
+  (keys || []).forEach(function (k) { const key = wishKey_(k); if (key) want[key] = true; });
+  const sheet = getWishSheet_();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return 0;
+    const range = sheet.getRange(2, WISH_COL.DONE + 1, lastRow - 1, 2);
+    const names = sheet.getRange(2, WISH_COL.NAME + 1, lastRow - 1, 1).getValues();
+    const done = range.getValues();
+    const now = new Date();
+    let count = 0;
+    names.forEach(function (r, i) {
+      if (!want[wishKey_(r[0])] || isPurchased_(done[i][0])) return;
+      done[i] = [true, now];
+      count++;
+    });
+    if (count) range.setValues(done);
+    return count;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * AI に渡す指示文。sheet はスプレッドシートに直接書き込んでもらうとき、
+ * paste はアプリに貼り付ける形で出力してもらうとき用。
+ */
+function wishInstructions_() {
+  const ss = getSpreadsheet_();
+  const sheetText = [
+    'Google スプレッドシート「' + ss.getName() + '」（' + ss.getUrl() + '）の「' + CONFIG.SHEETS.WISHLIST + '」シートに、決めた買い物を追記してください。',
+    '- 1行目は見出し。既存の最後の行のすぐ下に、1品1行で追加する',
+    '- A列「品名」は必須。B列「メモ」にサイズ・色・数量・用途など、C列「購入先」に URL か店名（分からなければ空欄）',
+    '- D列「追加日」は空欄でよい（自動で入る）。E列「追加者」にはあなたの名前（例: ChatGPT）',
+    '- F列「購入済み」と G列「購入日」は空欄のままにする',
+    '- ほかのシートと、既存の行は変更・削除しない',
+  ].join('\n');
+  const pasteText = [
+    '決めた買い物を、家の在庫管理アプリに貼り付けられる形で出力してください。',
+    '- 1行1品で「品名 / メモ / 購入先」の形式。区切りは前後に空白を入れたスラッシュ（ / ）',
+    '- メモにはサイズ・色・数量・用途など、購入先には URL か店名。分からなければ省略してよい',
+    '- 見出しや説明文、箇条書きの記号は付けず、その行だけをコードブロックで出力する',
+  ].join('\n');
+  return { sheet: sheetText, paste: pasteText };
+}
+
 // ---------- 買い物リスト ----------
 
 /**
@@ -384,7 +587,13 @@ function formatShoppingSheet_(sheet) {
   sheet.getRange('H:H').setNumberFormat('yyyy/mm/dd hh:mm');
 }
 
-/** 最低在庫を下回る品目を「買い物リスト」シートに書き出す。 */
+/**
+ * 「買い物リスト」シートを作り直す。
+ * 先に最低在庫を下回る品目（種別「在庫不足」）、続けて「買いたい物」のまだ買っていない物（種別「単発」）を並べる。
+ * 単発の物が在庫不足の品目と同じなら、行は分けずに在庫不足の行のメモに載せる。
+ * 単発の物は購入済みにされるまで残る。在庫不足の物は在庫を数え直して最低在庫以上になると消える。
+ * @return {{shortage: Array, wishes: Array}}
+ */
 function refreshShoppingList() {
   const master = getItemMaster();
   const inventory = getAllInventory_();
@@ -396,15 +605,41 @@ function refreshShoppingList() {
     if (places[r.name].indexOf(r.drawerName) === -1) places[r.name].push(r.drawerName);
   });
   const now = new Date();
-  const rows = master
+
+  const wishSheet = getWishSheet_();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    normalizeWishSheet_(wishSheet, now);
+  } finally {
+    lock.releaseLock();
+  }
+  const allWishes = getOpenWishes_(master);
+
+  const shortage = master
     .filter(function (m) { return m.minStock > 0 && (totals[m.name] || 0) < m.minStock; })
     .map(function (m) {
       const have = totals[m.name] || 0;
-      return [m.name, m.product, m.store, have, m.minStock, m.minStock - have, (places[m.name] || []).join('、'), now];
+      const wish = allWishes.filter(function (w) { return w.masterName === m.name; })[0];
+      return {
+        name: m.name, product: m.product, store: m.store, have: have, min: m.minStock, shortage: m.minStock - have,
+        places: (places[m.name] || []).join('、'), memo: wish ? wish.memo : '', wishKey: wish ? wish.key : '',
+      };
     });
+  const merged = {};
+  shortage.forEach(function (s) { if (s.wishKey) merged[s.wishKey] = true; });
+  const wishes = allWishes.filter(function (w) { return !merged[w.key]; });
+
+  const rows = shortage.map(function (s) {
+    return [s.name, s.product, s.store, s.have, s.min, s.shortage, s.places, now, '在庫不足', s.memo];
+  }).concat(wishes.map(function (w) {
+    return [w.name, w.product, w.store, '', '', '', '', now, '単発', w.memo];
+  }));
 
   const sheet = getSheet_(CONFIG.SHEETS.SHOPPING);
   const headers = CONFIG.HEADERS.SHOPPING;
+  // 以前の版のシートは「種別」「メモ」列が無いので、見出しも毎回書き直す。
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#e8eaed');
   if (sheet.getLastRow() > 1) {
     sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).clearContent();
   }
@@ -412,5 +647,12 @@ function refreshShoppingList() {
     sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
   }
   formatShoppingSheet_(sheet);
-  return rows.map(function (r) { return { name: r[0], product: r[1], store: r[2], have: r[3], min: r[4], shortage: r[5] }; });
+  return {
+    // wishKey があれば、その在庫不足の行は「買いたい物」にも載っている。「買った」でそちらを購入済みにできる。
+    shortage: shortage,
+    wishes: wishes.map(function (w) {
+      return { key: w.key, name: w.name, memo: w.memo, store: w.store, product: w.product, addedBy: w.addedBy,
+        addedAt: w.addedAt ? w.addedAt.toISOString() : '' };
+    }),
+  };
 }
