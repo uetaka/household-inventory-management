@@ -8,6 +8,8 @@ function onOpen() {
     .addItem('初期設定（シート作成）', 'setupSpreadsheet')
     .addItem('Claude API 接続テスト', 'testClaudeConnectionFromMenu')
     .addItem('買い物リストを更新', 'refreshShoppingListFromMenu')
+    .addItem('買いたい物: AI への指示文を表示', 'showWishInstructionsFromMenu')
+    .addItem('買い物リストの自動更新（1時間ごと）を設定', 'installShoppingTriggerFromMenu')
     .addToUi();
 }
 
@@ -40,6 +42,15 @@ function setupSpreadsheet() {
 
   const shopping = ensureSheet_(ss, S.SHOPPING, H.SHOPPING);
   formatShoppingSheet_(shopping);
+
+  formatWishSheet_(ensureSheet_(ss, S.WISHLIST, H.WISHLIST));
+
+  // AI が「買いたい物」に書き込んでも、外部からの編集では編集時トリガーが動かないので、定期的に作り直す。
+  try {
+    installShoppingTrigger_();
+  } catch (e) {
+    Logger.log('買い物リストの自動更新を設定できませんでした: ' + e.message);
+  }
 
   // 空の「シート1」が残っていれば消す。
   const defaultSheet = ss.getSheetByName('シート1') || ss.getSheetByName('Sheet1');
@@ -75,6 +86,40 @@ function testClaudeConnectionFromMenu() {
 }
 
 function refreshShoppingListFromMenu() {
-  const rows = refreshShoppingList();
-  SpreadsheetApp.getUi().alert(rows.length ? rows.length + ' 品目が最低在庫を下回っています。' : '不足している品目はありません。');
+  const list = refreshShoppingList();
+  SpreadsheetApp.getUi().alert(
+    (list.shortage.length ? list.shortage.length + ' 品目が最低在庫を下回っています。' : '不足している品目はありません。') +
+    (list.wishes.length ? '\n買いたい物（単発）: ' + list.wishes.length + ' 件' : ''));
+}
+
+function showWishInstructionsFromMenu() {
+  SpreadsheetApp.getUi().alert('AI への指示文', wishInstructions_().sheet, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+// ---------- 買い物リストの自動更新 ----------
+
+const SHOPPING_TRIGGER_HANDLER = 'refreshShoppingListByTrigger';
+
+/** 時間主導トリガーから呼ばれる。AI や人が「買いたい物」に直接書いた行を買い物リストに反映する。 */
+function refreshShoppingListByTrigger() {
+  refreshShoppingList();
+}
+
+/**
+ * 1時間ごとに買い物リストを作り直すトリガーを、無ければ作る。
+ * トリガーは作った人のものになるので、アプリをデプロイした本人として実行される場所から呼ぶ。
+ * @return {boolean} 新しく作ったら true
+ */
+function installShoppingTrigger_() {
+  const exists = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === SHOPPING_TRIGGER_HANDLER;
+  });
+  if (exists) return false;
+  ScriptApp.newTrigger(SHOPPING_TRIGGER_HANDLER).timeBased().everyHours(1).create();
+  return true;
+}
+
+function installShoppingTriggerFromMenu() {
+  const created = installShoppingTrigger_();
+  SpreadsheetApp.getUi().alert(created ? '買い物リストを1時間ごとに自動更新するよう設定しました。' : '自動更新はすでに設定されています。');
 }
